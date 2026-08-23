@@ -2,6 +2,7 @@ import Foundation
 import AVFoundation
 import ScreenCaptureKit
 import Network
+import CoreGraphics
 
 /// System audio capture, so what the Mac is playing can be captioned.
 ///
@@ -46,7 +47,16 @@ final class SystemAudioCapture: NSObject, ObservableObject {
     func start() async throws -> UInt16 {
         stop()
 
-        let listener = try NWListener(using: .tcp, on: .any)
+        // Loopback only, and explicitly. `NWListener(using: .tcp, on: .any)` reads as "any
+        // port", but the listener it builds binds every interface, so while system audio was
+        // being captured anyone on the same Wi-Fi could open that port and receive raw PCM of
+        // whatever this Mac was playing. For an app whose whole claim is that the conversation
+        // never leaves the machine, that is the worst possible bug, and the engine only ever
+        // connects from 127.0.0.1 anyway.
+        let parameters = NWParameters.tcp
+        parameters.requiredLocalEndpoint = .hostPort(host: .ipv4(.loopback), port: .any)
+
+        let listener = try NWListener(using: parameters)
         self.listener = listener
 
         let port: UInt16 = try await withCheckedThrowingContinuation { continuation in
@@ -101,12 +111,26 @@ final class SystemAudioCapture: NSObject, ObservableObject {
     }
 
     private func startStream() async throws {
+        // Asked properly rather than inferred. Without permission ScreenCaptureKit does not
+        // throw: `SCShareableContent` succeeds and simply reports no displays, so the natural
+        // reading of a failure here is "this Mac has no screen", which is never true and sends
+        // the reader somewhere useless. `CGPreflightScreenCaptureAccess` is the documented
+        // check and answers without side effects.
+        guard CGPreflightScreenCaptureAccess() else {
+            // Registers the app in Privacy & Security so there is something to switch on. It
+            // does not raise a dialog: TCC declines to prompt for this service and denies
+            // instead, which is why the message has to name the pane and the relaunch.
+            _ = CGRequestScreenCaptureAccess()
+            throw CaptureError.notPermitted
+        }
+
         // A display is required to build a filter even though no picture is wanted. Excluding
         // this app's own audio matters more than it looks: without it the captions Sunno speaks
         // through a screen reader would be fed back in and captioned again.
         let content = try await SCShareableContent.excludingDesktopWindows(
             false, onScreenWindowsOnly: false)
         guard let display = content.displays.first else {
+            // Permission was granted a moment ago, so this really is an absent display.
             throw CaptureError.message("No display was available to capture system audio from.")
         }
 
@@ -137,10 +161,17 @@ final class SystemAudioCapture: NSObject, ObservableObject {
         self.stream = stream
     }
 
-    enum CaptureError: LocalizedError {
+    enum CaptureError: LocalizedError, Equatable {
+        case notPermitted
         case message(String)
+
         var errorDescription: String? {
-            switch self { case .message(let text): return text }
+            switch self {
+            case .notPermitted:
+                return "Screen recording permission has not been granted."
+            case .message(let text):
+                return text
+            }
         }
     }
 }

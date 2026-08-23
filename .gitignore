@@ -20,3 +20,6 @@ Packages/
 # Python, for the two contract tests
 __pycache__/
 *.pyc
+
+# The engine venv, created by scripts/setup-engine.sh
+.venv/

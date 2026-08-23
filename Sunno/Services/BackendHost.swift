@@ -64,28 +64,22 @@ final class BackendHost: ObservableObject {
         installTerminationGuards()
     }
 
-    /// Where the backend lives during development.
+    /// Where the engine lives.
     ///
-    /// Two layouts are tried, in order, because both are legitimate. The backend is a
-    /// submodule of this repository at `external/sunno`, which is the normal case. It may also
-    /// sit beside this checkout as a sibling clone, which is what you get if somebody clones
-    /// the two repositories separately rather than recursively, and that is common enough to
-    /// be worth handling rather than failing on.
+    /// In this repository, not another one. The Python engine is vendored at `server/` so the
+    /// macOS app is self-contained: it clones, builds and runs without a second checkout, and
+    /// improvements that belong to both platforms are pushed to both rather than shared through
+    /// a submodule that couples their release cycles.
     ///
     /// Walks up from the app bundle rather than hardcoding a relative depth, because the depth
     /// changes with the build configuration and the failure is a silent "engine never starts".
     private func developmentRoot() -> URL? {
-        let candidates = ["external/sunno", "../sunno"]
-
         var directory = Bundle.main.bundleURL
         for _ in 0..<8 {
             directory = directory.deletingLastPathComponent()
-            for candidate in candidates {
-                let root = directory.appendingPathComponent(candidate).standardizedFileURL
-                let marker = root.appendingPathComponent("server/app.py")
-                if FileManager.default.fileExists(atPath: marker.path) {
-                    return root
-                }
+            let marker = directory.appendingPathComponent("server/app.py").standardizedFileURL
+            if FileManager.default.fileExists(atPath: marker.path) {
+                return directory.standardizedFileURL
             }
         }
         return nil
@@ -117,12 +111,12 @@ final class BackendHost: ObservableObject {
         Self.reapOrphanedChild()
 
         guard let root = developmentRoot() else {
-            status = .failed("Could not find the Sunno backend. Run "
-                             + "'git submodule update --init --recursive'.")
+            status = .failed("Could not find the speech engine. It should be at server/ "
+                             + "beside the app.")
             return
         }
         guard let python = interpreter(in: root) else {
-            status = .failed("No Python interpreter found. Create a .venv in external/sunno.")
+            status = .failed("No Python found. Run scripts/setup-engine.sh to create .venv.")
             return
         }
 

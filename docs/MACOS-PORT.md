@@ -605,30 +605,79 @@ now", it is not technical and it belongs in the decision.
 
 ## What exists now
 
-This repository holds the app, written but never compiled: there was no Mac to compile it on, so the first build
-on the M1 Pro will find mistakes. 2,427 lines across 17 Swift files, matching the approved mockup screen
-for screen. `README.md` is the build handoff, and `docs/macos-mockup.html` is the mockup itself,
-which is worth opening in a browser before reading any of the Swift.
+This repository holds the app **and the engine it runs**, and both have now been built and used
+on an M1 Max. The Swift was written on Windows with no compiler; the first build found exactly
+one error, and running it found six more that no compiler could have.
 
-It talks to the existing Python backend over the existing WebSocket protocol, which is the deliberate
-bridge described above. That means the UI can be finished and judged before the engine decision is taken,
-and `Services/BackendHost.swift` is the file to delete when it is.
+What the compiler caught, in 2,400 lines: a ternary mixing `.secondary` with `.orange`.
 
-Three things were verified from Windows, because they are the mistakes a Swift compiler cannot catch and
-that are most expensive to find on the Mac:
+What running it caught, in order of how badly each one lied:
 
-- `tests/test_swift_protocol.py` reads the backend's own source, extracts every event it can emit, and
-  compares that against `Protocol/Events.swift` in both directions. 16 event types, 41 wire fields, 10
-  commands and the 8-field device list. A wire name that differs by an underscore compiles cleanly in
-  Swift and then silently decodes to nil, which on a caption means a line with no speaker and no clarity:
-  the feature looks broken rather than misspelt.
-- `tests/test_theme_parity.py` compares `Theme.swift` against `App.xaml`: two ink brushes, eight speaker
-  hues, three clarity colours and the seven numeric rules that live in both codebases. A wrong digit in a
-  speaker hue makes two people in a four-way conversation closer in colour on the one screen whose job is
-  telling them apart.
-- Both were checked by deliberately breaking them, because a test that cannot fail is worth nothing.
+- **Captions rendered at zero height.** `CaptionTextView` wraps an `NSTextView`, which has no
+  useful intrinsic height outside the `NSScrollView` it is built to live in. Every row laid out
+  at nothing, so the transcript looked blank while events arrived perfectly, and the empty state
+  did not appear either because `lines` was not empty. This is the failure mode to expect from
+  the rest of the AppKit surface, and it argues for measuring anything hosted rather than
+  assuming SwiftUI will ask.
+- **The engine was orphaned on any exit but a clean stop**, and an orphan holds the microphone
+  and both ports, so the next launch failed to bind and silently attached to the stale process.
+  Three exits need three mechanisms, and the pid file is the only one that survives a crash.
+  Identity is pid plus start time, never the executable path: a framework CPython re-execs into
+  `Python.app` moments after launch, so the path is not stable for the life of its own process.
+- **`BackendHost.status` was never rendered anywhere.** Three carefully written failure messages
+  reached only the diagnostics report, so a backend that never started left the window saying
+  "Starting the speech engine" indefinitely.
+- **`startUp()` ran on every `onAppear`**, and it replaces the engine, so the model never
+  finished loading.
 
-What is not verified is everything a compiler would catch. Treat the Swift as a careful first draft.
+The two checks still run, and one of them changed shape. `tests/test_swift_protocol.py` now reads
+the vendored `server/` rather than a submodule, which is a stronger check rather than a weaker
+one: it pins the Swift against the engine that will actually run. `tests/test_theme_parity.py`
+still needs a checkout of the Windows project and now reports a skip, in those words, when there
+is not one.
+
+### Phase 0, measured
+
+The gate this document set has been run, on an M1 Max on AC power, decoding six seconds of speech
+with CTranslate2 int8 on the processor. Two columns, because the shipped tables were built at
+beam 1 without word timestamps while `asr.py` asks for beam 5 with them, and the difference is
+not small.
+
+| Model | Picker estimate | beam 1, no words | beam 5, word timestamps |
+|---|---|---|---|
+| Whisper large-v3 | 842 ms | 4085 ms | **4684 ms** |
+| Whisper medium | 505 ms | 2242 ms | **2683 ms** |
+| Whisper small | 194 ms | 893 ms | **1177 ms** |
+| Whisper base | 98 ms | 305 ms | **698 ms** |
+
+**The exit criterion is answered: CPU-only CTranslate2 does not clear `small`.** It clears `base`
+comfortably and `small` only at the table's own methodology, not at the settings the app uses,
+and that is on the faster of the two machines, plugged in. By this document's own reasoning the
+rewrite therefore buys "considerably more" than the marginal case, and the case for it is
+stronger than when this was written.
+
+Both streaming transducers work unchanged through sherpa-onnx.
+
+**The landmine fired.** `hardware.py` scales its tables by a measured `cpu_score`, this machine
+scores 377.9 against a reference of 73.0, and the result is estimates three to seven times
+optimistic. Every model in the catalogue is marked responsive, including `large-v3`, and
+`default_model` takes the first responsive entry, so **a Mac currently defaults to a 3 GB
+download that runs 4.7x over budget**. The probe is a BLAS matmul benchmark, which Accelerate is
+extremely good at and which says nothing about int8 transformer decode. Populating a macOS table
+is left undone deliberately, and the README warns users in the meantime.
+
+### Three unverified claims settled
+
+- **ScreenCaptureKit reaches system audio, and an audio-only stream is not needed.** A 2x2 screen
+  output at one frame every two seconds is added and discarded, which sidesteps the question
+  entirely at no measurable cost.
+- **Screen recording never prompts.** TCC returns a denial and adds the app to the list silently:
+  `Service kTCCServiceScreenCapture does not allow prompting; returning denied.` The app has to
+  say so and name the relaunch, because somebody waiting for a dialog waits forever.
+- **An ad-hoc signature loses the grant on every rebuild**, exactly as `project.yml` warns:
+  `Failed to match existing code requirement for subject com.desigrit.sunno`. The requirement
+  pins to the binary hash. A self-signed certificate is enough to fix it, because the requirement
+  then keys to the certificate.
 
 ---
 
@@ -639,31 +688,49 @@ machine, so opening the app on a different Mac or PC starts empty. That is delib
 project rather than a problem to work around: the reasoning is supposed to live in the repository,
 which is why this file records rejected alternatives and measurements rather than just conclusions.
 
-Everything needed is in these two repositories. In order:
+In order:
 
-1. `external/sunno/docs/CONTEXT.md`, the project context and everything learned building the
-   Windows app. Read this first if you have not worked on Sunno before, or if it has been a
-   while. It carries the promises, the measurements, the decisions that were made twice, and
-   the bugs worth knowing about. It lives in the backend repository because most of what it
-   records is about the pipeline, which both platforms share.
-2. `docs/MACOS-PORT.md`, this file. The decisions, the evidence, and what is still unverified.
-3. `docs/macos-mockup.html`, the approved UI. Open it in a browser. Every screen, the macOS control
+1. `docs/MACOS-PORT.md`, this file. The decisions, the evidence, and what is still unverified.
+2. `docs/macos-mockup.html`, the approved UI. Open it in a browser. Every screen, the macOS control
    mapping, and the three places a macOS pattern conflicts with the Windows shape.
-4. `README.md`, the build handoff. How to generate the Xcode project and what will break first.
-5. `Sunno/`, the app itself. Written, never compiled.
+3. `README.md`, which is now written for somebody using the app rather than building it.
+4. `Sunno/` and `server/`, the app and the engine it runs.
+5. `docs/CONTEXT.md` in [desigrit/sunno](https://github.com/desigrit/sunno), the project context
+   and everything learned building the Windows app. Read it if you have not worked on Sunno
+   before. It stays there because most of what it records is about the pipeline, and it is the
+   one thing worth crossing repositories for.
 
-**The first four commands on the Mac:**
+**The first commands on the Mac:**
 
 ```bash
-git clone --recurse-submodules https://github.com/desigrit/sunno-macos.git && cd sunno-macos
-python tests/test_swift_protocol.py     # should pass, needs no venv
-python tests/test_theme_parity.py       # should pass, needs no venv
+git clone https://github.com/desigrit/sunno-macos.git && cd sunno-macos
+python3 tests/test_swift_protocol.py    # needs no venv
+./scripts/setup-engine.sh
 brew install xcodegen && xcodegen generate && open Sunno.xcodeproj
 ```
 
-The two tests passing on arrival confirms the submodule resolved and that the Swift wire types
-still agree with the Python backend at the pinned commit. The Xcode build is where the uncompiled
-code meets a compiler for the first time, and it will find things.
+No `--recurse-submodules`, and nothing to initialise. The engine is in `server/`, in this
+repository, so the app builds and runs without a second checkout. `docs/MACOS-PORT.md` argued for
+a submodule and that was reversed: see the entry below.
+
+### Reversal: the backend as a submodule
+
+**First position.** The engine lived in `desigrit/sunno` and was carried here as a pinned
+submodule, for two reasons. The first was temporary, that running the existing Python engine put
+real captions on screen before the native engine decision was taken. The second was meant to
+last: two tests read the backend's source to check this client against it, and a submodule is
+what puts both in one tree long enough to compare.
+
+**Reversal.** The second reason did not survive contact with the first. Adding system audio meant
+changing the engine, which meant a commit in the other repository, a pin bump here, and a client
+branch that could not be cloned until the engine branch landed. Two repositories that cannot be
+built independently are one repository with extra steps.
+
+**Current position.** `server/` is vendored. This repository clones, builds and runs on its own.
+The cost is real and is accepted: the engine exists in both projects, and an improvement that
+belongs to both is pushed to both. The protocol test is stronger for it, because it now pins the
+Swift against the engine that will actually run rather than against a commit somebody remembered
+to bump. Only the theme parity check still wants the Windows tree, and it skips loudly without it.
 
 **Then phase 0**, below, which is a day of measurement and is what everything else waits on.
 

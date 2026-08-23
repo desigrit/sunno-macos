@@ -117,10 +117,25 @@ struct SunnoApp: App {
 
         Task {
             devices.select(DeviceCatalog.systemAudio)
-            await startOnSystemAudio()
+            if await startOnSystemAudio() == false {
+                // Fall back rather than sit there with no engine at all. A permission that was
+                // never granted should cost the feature that needs it, not the whole app: an
+                // accessibility tool that captions nothing because one capture path was refused
+                // has failed at the only thing it is for. The banner still says what happened.
+                devices.select(DeviceCatalog.systemAudio)
+                startOnMicrophone()
+            }
             client.connect(port: backend.wsPort)
             await devices.refresh()
         }
+    }
+
+    /// The default input, with whatever device the settings remember.
+    private func startOnMicrophone() {
+        backend.start(model: settings.selectedModel,
+                      device: settings.deviceIsLoopback ? nil : settings.deviceIndex,
+                      loopbackDevice: settings.deviceIsLoopback ? settings.deviceIndex : nil,
+                      forceCPU: settings.forceCPU)
     }
 
     /// The saved device may have moved. Correct the setting and restart on the right one rather
@@ -159,31 +174,61 @@ struct SunnoApp: App {
                           forceCPU: settings.forceCPU)
             return
         }
-        Task { await startOnSystemAudio() }
+        Task {
+            if await startOnSystemAudio() == false, backend.status != .running {
+                // Whenever the attempt left nothing running, which includes an engine that
+                // failed to spawn as well as one that was never started. A refusal that
+                // happened before the old engine was stopped has already left a working one
+                // in place, and that case is the reason this is a check rather than an else.
+                startOnMicrophone()
+            }
+        }
     }
 
     /// Bring the capture up first, then hand the engine the port it serves on. The engine is
     /// stopped only once there is something for its replacement to connect to, so a refused
     /// permission leaves the working engine alone rather than killing it for nothing.
-    private func startOnSystemAudio() async {
-        guard await confirmScreenCapturePermission() else { return }
+    @discardableResult
+    private func startOnSystemAudio() async -> Bool {
+        guard await confirmScreenCapturePermission() else { return false }
         do {
             let port = try await systemAudio.start()
             backend.stop()
             backend.start(model: settings.selectedModel,
                           device: nil, loopbackDevice: nil, pcmPort: port,
                           forceCPU: settings.forceCPU)
-        } catch {
+
+            // `start` reports failure by setting a status rather than by throwing, so success
+            // has to be read back. Returning true regardless left the capture running, the
+            // recording indicator lit and PCM going to a socket nobody was reading, while the
+            // caller believed system audio was working and never fell back.
+            guard backend.status == .running else {
+                systemAudio.stop()
+                return false
+            }
+            return true
+        } catch SystemAudioCapture.CaptureError.notPermitted {
             systemAudio.stop()
             // Named exactly, and with the relaunch, because this permission never prompts.
-            // macOS returns a denial and quietly adds the app to the list instead, so
-            // somebody waiting for a dialog waits forever. Verified in the TCC log:
-            // "Service kTCCServiceScreenCapture does not allow prompting; returning denied."
+            // macOS returns a denial and quietly adds the app to the list instead, so somebody
+            // waiting for a dialog waits forever. Verified in the TCC log: "Service
+            // kTCCServiceScreenCapture does not allow prompting; returning denied."
             store.reportProblem(
                 "Sunno needs permission to capture system audio. Open Privacy & Security, "
                 + "then Screen & System Audio Recording, switch Sunno on, and reopen it. "
-                + "macOS will not ask on its own.",
+                + "macOS will not ask on its own. Listening to the microphone meanwhile.",
                 code: "screen_denied")
+            return false
+        } catch {
+            systemAudio.stop()
+            // Anything else, said plainly. Permission has already been ruled out above, so
+            // repeating the Settings advice here would send somebody to a switch that is
+            // already on.
+            store.reportProblem(
+                "System audio could not be captured. \(error.localizedDescription) "
+                + "Listening to the microphone meanwhile.",
+                code: nil)
+            return false
         }
     }
 

@@ -1,190 +1,216 @@
 # Sunno for macOS
 
-The native macOS client for [Sunno](https://github.com/desigrit/sunno), an offline live
-captioning app. Apple Silicon, macOS 14.4 and later.
+**Live captions for the conversation in front of you, running entirely on your own Mac.**
 
-**Nothing here has been compiled.** It was written on a Windows machine with no Xcode and no
-Apple-platform Swift toolchain, so the first build will find mistakes. What could be verified
-without a compiler has been, and there are tests for it: see "What is already checked" below.
-Treat the Swift as a careful first draft.
+---
 
-## Clone
+## Why this exists
 
-The backend is a submodule, so clone recursively:
+I kept missing things.
+
+Not the big things. I hear those. It is the small ones that go past: the end of a sentence when
+someone turns their head, the name of the restaurant, the punchline everyone else laughs at. You
+nod along and hope nobody asks a follow up question. If you have done that, you already know why
+this app exists.
+
+Sunno means "listen" in Hindi and Urdu.
+
+This is the Mac version of [Sunno](https://github.com/desigrit/sunno), which started on Windows.
+Same promises, same shape, a different machine underneath.
+
+## What it does
+
+Point it at a microphone and it writes down what people are saying, as they say it. Put it near
+the table at dinner, beside you in a meeting, or pass a small mic to whoever is talking.
+
+- **Captions what your Mac is playing,** which covers video calls, YouTube, podcasts, films.
+  There is no equivalent of Windows' loopback capture here, so Sunno uses ScreenCaptureKit and
+  explains itself before macOS asks. See [System audio](#system-audio) below.
+- **Labels who is speaking.** A four way conversation reads like a conversation instead of one
+  long paragraph. Rename anyone, and mark which one is you so your own lines step back.
+- **Shows how long you have been recording,** and says "No audio" rather than counting on
+  cheerfully when sound stops arriving. A clock that keeps climbing over a dead microphone is
+  the one failure this app can least afford.
+- **Handles accented speech well**, which is why the engine is Whisper rather than something
+  faster.
+- **Compact mode**, always on top, adjustable text size, and you can select and copy any part of
+  the transcript. Hover an uncertain word to see how confident the model was.
+
+## It runs on your Mac. All of it.
+
+This matters more than any feature.
+
+Captioning apps usually stream your microphone to a company's servers. That means the
+conversation at your dinner table, with your family in it, leaves your house. People who have not
+thought about it will still feel it, and they are right to.
+
+Sunno does the recognition on your own machine. No account, no sign in, no telemetry, no server
+to send anything to. Turn off your Wi-Fi and it works exactly the same. The people around you are
+not being uploaded anywhere, and you can tell them so honestly.
+
+The only time Sunno touches the network is downloading the speech model on first run. After
+that, never.
+
+Two things it deliberately does not do. Device names never reach a log or the diagnostics
+export: a capture device called "Headset (R-Phonak hearing aid)" tells the reader that the user
+wears a hearing aid, which is health information arriving through a field nobody thinks of as
+sensitive. And the diagnostics report is built as an allow-list rather than a filter, because a
+filter has to anticipate every category of secret and an allow-list only emits what somebody
+deliberately put on it.
+
+## Requirements
+
+Apple Silicon, macOS 13.3 or later. The first run downloads a speech model.
+
+## Building
+
+There is no installer yet. Build it from source.
 
 ```bash
-git clone --recurse-submodules https://github.com/desigrit/sunno-macos.git
+git clone https://github.com/desigrit/sunno-macos.git
 cd sunno-macos
+./scripts/setup-engine.sh          # the Python engine, in a .venv
+brew install xcodegen && xcodegen generate && open Sunno.xcodeproj
 ```
 
-If you already cloned without it:
+`project.yml` is the source of truth and the `.xcodeproj` is generated rather than committed: a
+pbxproj conflicts on every branch and nobody reviews it, where forty lines of YAML can be read in
+a pull request.
+
+**Sign it with a real identity, even for a private build.** macOS ties a permission grant to the
+signing identity, so an ad-hoc signature loses its microphone and screen recording permissions on
+every rebuild. That reads as a permissions bug and is not one. A self-signed development
+certificate is enough, because the grant keys to the certificate rather than to the binary.
+
+Run the engine on its own, which is useful for testing without the app:
 
 ```bash
-git submodule update --init --recursive
+./.venv/bin/python -m server.app --list-devices
+./.venv/bin/python -m server.app --model base
 ```
 
-## Build
+Two checks run on a bare Python, with no venv and no Xcode. They read text.
 
 ```bash
-brew install xcodegen
-xcodegen generate
-open Sunno.xcodeproj
+python3 tests/test_swift_protocol.py
+python3 tests/test_theme_parity.py
 ```
 
-`project.yml` is the source of truth. The `.xcodeproj` is generated and is not committed: a
-pbxproj conflicts on every branch and nobody reviews it, where forty lines of YAML can be read
-in a pull request.
+The first reads the engine's own source, extracts every event it can emit, and compares that
+against `Protocol/Events.swift` in both directions: sixteen event types, forty-one wire fields
+and the device list. A wire name that differs by an underscore compiles cleanly in Swift and then
+decodes to nil, which on a caption means a line with no speaker and no clarity, so the feature
+looks broken rather than misspelt. It does not carry its own copy of the schema and it must not
+grow one.
 
-## Why the backend is a submodule
+The second compares `Theme.swift` against the Windows app's `App.xaml`. It is the only check here
+that needs the other repository, and it reports a skip rather than a pass when there is no
+checkout to compare against. Clone `desigrit/sunno` beside this one, or set `SUNNO_WINDOWS_REPO`.
 
-This repository holds the client. `desigrit/sunno` holds the Python backend that defines the
-protocol, the WinUI app the interface is ported from, and the accumulated project context. The
-submodule at `external/sunno` exists for two reasons, and only one of them is temporary.
+## System audio
 
-**The temporary one:** the first milestone runs the existing Python engine as a child process,
-so the client has real captions on screen before the native engine decision is taken.
-`Services/BackendHost.swift` launches it. That file is meant to be deleted, and
-`docs/MACOS-PORT.md` explains when and why.
+macOS has no equivalent of the Windows loopback capture, and it files system audio under the
+screen recording permission. So the app says, in its own words and before the system asks, that
+it needs that permission because that is where the audio lives and that no picture of your screen
+is read or kept.
 
-**The lasting one:** two tests here read the backend's source to check this client against it.
-A wire name that differs by an underscore compiles cleanly in Swift and then decodes to nil,
-which on a caption means a line with no speaker and no clarity. Neither language can see the
-other, so the check has to live above both, and the submodule is what puts them in one tree
-long enough to compare.
+Two things are worth knowing, because both surprised me:
 
-The submodule pins a commit rather than tracking a branch, deliberately. A green test means
-this client agrees with the backend **at that commit**, not with whatever is on its main
-branch, and the test prints which commit so a passing run cannot be misread. Bumping the pin is
-a reviewable act:
+- **macOS never prompts for screen recording.** It denies the request and adds the app to the
+  list in Privacy & Security silently. You have to switch Sunno on there yourself and reopen it.
+  The app says so rather than leaving you waiting for a dialog that is not coming.
+- Choosing **System audio (this Mac)** in the device menu is all there is to it after that. It
+  appears alongside the microphones.
 
-```bash
-cd external/sunno && git fetch && git checkout <commit> && cd ../..
-git add external/sunno && git commit
-```
+## Honest about what it cannot do
 
-## What is already checked
+No captioning system is perfect, and anyone who tells you otherwise is selling something.
 
-Both run on a bare Python with no venv and no Xcode. They read text.
+- **The engine runs on the processor only, and that is the ceiling on this port.** CTranslate2
+  has no Metal or Neural Engine backend, so none of the Mac's fast hardware is used yet.
+  Measured on an M1 Max, decoding six seconds of speech at the settings the app actually uses:
 
-```bash
-python tests/test_swift_protocol.py
-python tests/test_theme_parity.py
-```
+  | Model | Decode | Keeps up? |
+  |---|---|---|
+  | Whisper base | 0.7 s | yes |
+  | Whisper small | 1.2 s | marginal |
+  | Whisper medium | 2.7 s | no |
+  | Whisper large-v3 | 4.7 s | no |
+  | Zipformer, Kroko | streaming | yes |
 
-`test_swift_protocol.py` imports the schema from the backend repository through the submodule
-and checks `Protocol/Events.swift` against it in both directions: every event the backend can
-emit has a Swift case, every Swift case names a real event, every wire field is one the backend
-sends, and the `unknown` fallback exists so a newer backend cannot break an older client.
-Sixteen event types, forty-one wire fields, plus the device list.
+  **The delay estimates in the model picker are wrong on Apple Silicon**, in the optimistic
+  direction, because they are scaled from measurements taken on a Windows machine. They read
+  three to seven times faster than the truth, so the picker will offer you `large-v3` and it will
+  not keep up. Choose `base` until this is fixed.
+  [`docs/MACOS-PORT.md`](docs/MACOS-PORT.md) explains what a native engine would buy.
+- **Microphone placement matters more than the model.** Moving from a distant tabletop mic to a
+  close talking one is worth roughly twice the accuracy, which is more than any model change
+  available.
+- **Speaker labels are best effort.** Short turns like "yeah" or "okay, fine" are left unlabelled
+  rather than guessed at, because embeddings need two to three seconds of speech to be
+  dependable. Naming the people you talk to most is the single biggest improvement.
+- **Overlapping speech degrades badly.** When two people talk at once, single channel recognition
+  of any kind struggles.
 
-**It does not carry its own copy of the schema, and it must not grow one.** Two declarations of
-one contract drift, and drifting silently is the exact failure being guarded against.
+It is a tool for catching more of what is said, not a court transcript. Used that way, it is
+genuinely useful.
 
-`test_theme_parity.py` compares `Theme.swift` against the Windows `App.xaml` through the same
-submodule: two ink brushes, eight speaker hues, three clarity colours, and the seven numeric
-rules that live in both codebases. A wrong digit in a speaker hue does not crash anything, it
-makes two people in a four-way conversation closer in colour on the one screen whose job is
-telling them apart.
-
-Both were checked by deliberately breaking them, because a test that cannot fail is worth
-nothing.
-
-## Running it
-
-The Mac needs the backend working first:
-
-```bash
-cd external/sunno
-python3 -m venv .venv
-.venv/bin/python -m pip install faster-whisper sounddevice soxr numpy websockets \
-                                onnxruntime huggingface_hub sherpa-onnx
-```
-
-Deliberately not `pip install -r requirements.txt`. That file fails to resolve on macOS:
-`pyaudiowpatch` publishes no macOS wheel and no sdist, and `nvidia-cublas-cu12` and
-`nvidia-cudnn-cu12` publish only manylinux and win_amd64 wheels. The list above is the subset
-that resolves.
-
-`BackendHost` finds the backend at `external/sunno`, or as a sibling clone at `../sunno` if you
-checked the two out separately.
-
-### If the microphone prompt never appears
-
-A plain command-line process with no `.app` bundle around it may be unable to present a TCC
-dialog on macOS 26, and the symptom looks like a broken audio device rather than a missing
-prompt. Run through Xcode rather than invoking the Python directly when testing capture.
-
-## Layout
+## How it fits together
 
 ```
-Sunno/
-  SunnoApp.swift          entry point, menu bar commands, diagnostics allow-list
-  Theme.swift             palette and numeric rules, mirrored from the Windows app
-  Protocol/
-    Events.swift          wire types, pinned by tests/test_swift_protocol.py
-  Services/
-    CaptionClient.swift   the socket, with an indefinite reconnect ladder
-    BackendHost.swift     launches the Python engine. Temporary, see above
-    DeviceCatalog.swift   device list, fetched from the backend's HTTP endpoint
-    AppSettings.swift     preferences and the two window geometries
-  Models/
-    TranscriptStore.swift lines, speakers, status, assembled from the event stream
-  Views/
-    MainView.swift        window body, compact body, problem banner, empty state
-    SidebarView.swift     speakers and the model disclosure
-    TranscriptView.swift  the caption list
-    CaptionTextView.swift AppKit text, for per-word confidence on hover
-    CommandBar.swift      level meter, device picker, transport, status
-    SettingsWindow.swift  Command comma, tabbed
-    FirstRunView.swift    model picker
-    SpeakerEditor.swift   rename, mark as self, merge
-  Windowing/
-    WindowChrome.swift    window level, minimum size, the two saved frames
-docs/
-  MACOS-PORT.md           the decisions, the evidence, what is unverified
-  macos-mockup.html       the approved interface, screen by screen
-external/sunno            the backend, as a pinned submodule
+microphone ─┐
+            ├─► resample 16 kHz ─► Silero VAD ─► Whisper ─► WebSocket ─► SwiftUI app
+system audio┘        (ScreenCaptureKit, over a local socket)
 ```
 
-## Decisions worth knowing before changing things
+A Python engine does capture and recognition. A SwiftUI app displays the results and talks to it
+over a local WebSocket. They are separate processes on purpose: a crash in inference leaves the
+window alive and reconnecting instead of taking the app down mid-conversation.
+
+| Directory | Contents |
+|---|---|
+| `Sunno/` | The macOS app: SwiftUI views, the socket, the window chrome |
+| `server/` | Python engine: capture, VAD, recognition, speaker labelling |
+| `ui/` | Browser client, for the phone or handheld route |
+| `scripts/` | Engine setup |
+| `docs/MACOS-PORT.md` | The decisions, the evidence, and what is still unverified |
+| `docs/macos-mockup.html` | The approved interface, screen by screen |
+
+**The engine is vendored here rather than shared.** This repository clones, builds and runs on
+its own, with no second checkout and no submodule, because two projects that cannot be built
+independently are one project in a trenchcoat. The cost is that `server/` exists in both
+repositories, and an improvement that belongs to both is pushed to both. That is a deliberate
+trade: a little duplication against a build that never depends on someone else's release.
+
+Some of what is vendored is inert here. `loopback.py` is WASAPI and `cuda_setup.py` is NVIDIA, so
+neither runs on a Mac; both are kept so the two copies stay easy to diff.
+
+### Decisions worth knowing before changing things
 
 **The transcript is AppKit, not SwiftUI.** `CaptionTextView` wraps an `NSTextView` because
-hovering a word to see how confident the model was needs hit-testing that SwiftUI's `Text`
-cannot do. The styling alone would work in SwiftUI; the hover would not.
+hovering a word to see how confident the model was needs hit-testing that SwiftUI's `Text` cannot
+do. It also has to report its own height, because an `NSTextView` outside a scroll view has none
+and every caption lays out at zero.
 
 **Uncertain words carry three signals, not one.** Grey, italic and an underline. Colour alone
 would fail Differentiate Without Color, and this is the last app that should lean on hue.
 
-**Settings is a separate window.** The Windows build uses a full-window page with a back arrow.
-Command comma has to open something on macOS, and keeping the page would be the most obviously
-non-native thing in the app. This is the one deliberate departure from the Windows shape; the
-rest is identical.
+**Settings is a separate window**, because Command comma has to open something on macOS. This is
+the one deliberate departure from the Windows shape; the rest is the same.
 
 **Compact mode lowers the window minimum before shrinking, and raises it after expanding.** In
-the other order the window silently refuses the resize, because it is still holding a minimum
-larger than the size being requested.
+the other order the window silently refuses the resize.
 
 **`speaker_merged` and `speaker_deleted` are handled before the roster that follows them.** The
-backend guarantees that ordering deliberately. Handle them the other way round and captions keep
+engine guarantees that ordering deliberately. Handle them the other way round and captions keep
 the name of somebody the user just asked the app to forget.
 
-**Device names never reach a log or the diagnostics export.** A capture device called "Headset
-(R-Phonak hearing aid)" tells the reader the user wears a hearing aid, which is health
-information arriving through a field nobody thinks of as sensitive. The report says whether a
-device was chosen, never which.
-
-**There is no AccentColor asset, on purpose.** Without one, `Color.accentColor` follows the
-system accent the user chose, which is what the Windows build does. The brand teal lives in
-`Theme.ink` and is used only for the mark and the badges.
-
-## Not built yet
-
-System audio capture. `docs/MACOS-PORT.md` recommends building the seam with ScreenCaptureKit
-as the path that must work and the Core Audio tap as an enhancement on macOS 14.4 and later,
-and that is phase 2. The owner routes system audio and a hearing aid through this path daily,
-so it is the feature that decides whether the port is usable rather than merely working.
+**There is no AccentColor asset, on purpose.** Without one, `Color.accentColor` follows the system
+accent the user chose. The brand teal lives in `Theme.ink` and is used only for the mark.
 
 ## Licence
 
-MIT, matching the parent project. See [desigrit/sunno](https://github.com/desigrit/sunno) for
-third-party notices, which cover the speech models and include one known licence gap.
+MIT. See [LICENSE](LICENSE) and [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).
+
+Sunno is free, and the source is public so you can read exactly what it does with your microphone
+rather than taking my word for it.

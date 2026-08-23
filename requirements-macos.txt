@@ -1,0 +1,28 @@
+# The Python speech engine, as it resolves on macOS.
+#
+# Not a copy of the Windows project's requirements.txt, which cannot be installed here:
+# pyaudiowpatch publishes no macOS wheel and no sdist, and nvidia-cublas-cu12 and
+# nvidia-cudnn-cu12 publish only manylinux and win_amd64 wheels. Nothing on this list is
+# Windows-only, and nothing that is Windows-only appears on it.
+#
+# Unpinned on purpose while the port is young: the versions that resolve are moving, and a
+# pinned set would go stale faster than anyone would notice. Pin before shipping.
+
+# Whisper, through CTranslate2. Publishes macosx_11_0_arm64 wheels, processor only: there is
+# no Metal or Neural Engine backend, which is the measurement docs/MACOS-PORT.md turns on.
+faster-whisper
+
+# Capture, resampling and arrays.
+sounddevice
+soxr
+numpy
+
+# The socket the app and the browser client speak over.
+websockets
+
+# Silero VAD, and the speaker embedding model.
+onnxruntime
+sherpa-onnx
+
+# Model downloads: resumable ranged fetch, etag caching and integrity.
+huggingface_hub

@@ -5,9 +5,15 @@ in its light and dark forms, eight speaker hues and three clarity bands. They we
 by hand, which is a bad way to move twenty-two hex values between two files that no compiler
 reads together, and now between two repositories as well.
 
-The Windows side is reached through the `external/sunno` submodule rather than copied here,
-for the same reason the protocol schema is: a second copy of a value is a second thing to
-drift, and drift is what this exists to catch.
+The Windows side is read from a checkout of `desigrit/sunno` rather than copied here, for the
+same reason the protocol schema is: a second copy of a value is a second thing to drift, and
+drift is what this exists to catch.
+
+That checkout is optional, and this is the one check in the repository that needs it. The two
+projects are independent: the macOS app clones, builds and runs on its own. So when no Windows
+checkout is found this reports a skip and stops, loudly enough that nobody mistakes it for a
+pass. Point it at one with SUNNO_WINDOWS_REPO, or clone `desigrit/sunno` beside this
+repository and it will be found.
 
 The failure it guards against is quiet rather than loud. A wrong digit in a speaker hue does
 not crash anything; it makes two people in a four-way conversation slightly closer in colour,
@@ -24,13 +30,27 @@ Run: python tests/test_theme_parity.py
 
 from __future__ import annotations
 
+import os
 import re
 import sys
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parents[1]
-SUBMODULE = HERE / "external" / "sunno"
-XAML = SUBMODULE / "app" / "App.xaml"
+
+
+def windows_repo() -> Path | None:
+    """A checkout of the Windows project, if there is one to compare against."""
+    override = os.environ.get("SUNNO_WINDOWS_REPO")
+    candidates = [Path(override)] if override else []
+    candidates += [HERE.parent / "sunno", HERE.parent / "Sunno"]
+    for candidate in candidates:
+        if (candidate / "app" / "App.xaml").is_file():
+            return candidate
+    return None
+
+
+WINDOWS = windows_repo()
+XAML = (WINDOWS / "app" / "App.xaml") if WINDOWS else Path("/nonexistent")
 SWIFT = HERE / "Sunno" / "Theme.swift"
 
 
@@ -123,7 +143,7 @@ def windows_numbers() -> dict[str, str]:
     """The same rules as the Windows app states them, read through the submodule."""
     out: dict[str, str] = {}
 
-    cs = (SUBMODULE / "app" / "MainWindow.xaml.cs").read_text(encoding="utf-8-sig")
+    cs = (WINDOWS / "app" / "MainWindow.xaml.cs").read_text(encoding="utf-8-sig")
     m = re.search(r"isSelf \? \(isFinal \? ([0-9.]+) : ([0-9.]+)\) : \(isFinal \? ([0-9.]+) : ([0-9.]+)\)", cs)
     if m:
         out["selfFinal"], out["selfPartial"] = m.group(1), m.group(2)
@@ -136,7 +156,7 @@ def windows_numbers() -> dict[str, str]:
     if mid:
         out["clarityMidAt"] = mid.group(1)
 
-    cfg = (SUBMODULE / "server" / "config.py").read_text(encoding="utf-8")
+    cfg = (HERE / "server" / "config.py").read_text(encoding="utf-8")
     m = re.search(r"low_confidence_below: float = ([0-9.]+)", cfg)
     if m:
         out["lowConfidenceBelow"] = m.group(1)
@@ -145,10 +165,19 @@ def windows_numbers() -> dict[str, str]:
 
 
 def main() -> int:
-    if not SUBMODULE.is_dir() or not XAML.is_file():
-        print("external/sunno is missing or empty. Run:")
-        print("  git submodule update --init --recursive")
-        return 1
+    if WINDOWS is None:
+        # A skip, not a pass, and it says so in those words. The two projects are independent,
+        # so a machine with only this repository on it cannot run this comparison, and a test
+        # that quietly reported success there would be worse than one that does not run.
+        print("SKIPPED: no Windows checkout to compare against.")
+        print()
+        print("  This is the one check that needs desigrit/sunno, because it compares the")
+        print("  palette against the app it was transcribed from. Everything else here")
+        print("  stands on its own.")
+        print()
+        print("  To run it, clone desigrit/sunno beside this repository, or point at it:")
+        print("    SUNNO_WINDOWS_REPO=/path/to/sunno python tests/test_theme_parity.py")
+        return 0
     if not SWIFT.is_file():
         print(f"{SWIFT} not found. This repository is the client, so that is a broken "
               f"checkout rather than a skip.")

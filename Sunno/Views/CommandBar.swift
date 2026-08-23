@@ -130,16 +130,15 @@ struct CommandBar: View {
         case "starting":  return "Starting the speech engine"
         case "loading":   return "Loading \(store.activeModel ?? "model")"
         case "listening":
-            guard store.isRunning else { return "Paused, microphone released" }
+            guard store.isRunning else { return "Paused" }
             return clock.isStalled ? "No audio" : clock.display
-        case "stopped":   return "Paused, microphone released"
+        case "stopped":   return "Paused"
         default:          return store.state
         }
     }
 
     /// The accumulated time moves into the tooltip rather than vanishing whenever a message
-    /// owns the line. While paused that message is a privacy assertion, which outranks a
-    /// number the reader can still hover for.
+    /// owns the line.
     private var statusHint: String {
         if isStalled {
             return "The device is open but no sound is reaching it. Try another input."
@@ -147,8 +146,6 @@ struct CommandBar: View {
         if store.state == "listening", store.isRunning {
             return "How long this conversation has been recording"
         }
-        return clock.hasRun
-            ? "\(clock.display) recorded, microphone released"
-            : "Microphone released"
+        return clock.hasRun ? "\(clock.display) recorded so far" : "Paused"
     }
 }
