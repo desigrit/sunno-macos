@@ -23,6 +23,10 @@ final class WindowChrome: ObservableObject {
     private var settings: AppSettings?
     private var observer: NSObjectProtocol?
 
+    /// Whether something that must not be hidden currently owns the window. Set by `MainView`,
+    /// which is the only place that knows what is on screen.
+    private var blocked = false
+
     func attach(to window: NSWindow, settings: AppSettings) {
         self.window = window
         self.settings = settings
@@ -55,6 +59,8 @@ final class WindowChrome: ObservableObject {
 
     func setCompact(_ compact: Bool) {
         guard let settings, settings.isCompact != compact else { return }
+        // Refused rather than queued. See `MainView.blocksCompact`.
+        if compact, blocked { return }
         rememberCurrentFrame()
         settings.isCompact = compact
         apply(compact: compact, remember: true)
@@ -67,7 +73,18 @@ final class WindowChrome: ObservableObject {
     func setAlwaysOnTop(_ onTop: Bool) {
         guard let settings else { return }
         settings.alwaysOnTop = onTop
-        applyFloating(onTop || settings.isCompact)
+        applyFloating(onTop || (settings.isCompact && !blocked))
+    }
+
+    /// Show expanded geometry while compact is being refused, and restore the compact frame
+    /// once it is allowed again. `settings.isCompact` is deliberately not touched: being forced
+    /// out of compact by a setup screen is not the user changing their mind about it.
+    func setCompactBlocked(_ value: Bool) {
+        guard blocked != value else { return }
+        blocked = value
+        guard let settings, settings.isCompact else { return }
+        apply(compact: !value, remember: false)
+        applyFloating(!value || settings.alwaysOnTop)
     }
 
     func rememberCurrentFrame() {

@@ -41,11 +41,41 @@ final class AppSettings: ObservableObject {
         didSet { defaults.set(selectedModel, forKey: Keys.selectedModel) }
     }
 
+    /// The capture device, remembered across launches.
+    ///
+    /// The index alone is not enough and the Windows build learned this the hard way
+    /// (`MainWindow.xaml.cs:2491-2619`): indices are positional, so plugging in an interface
+    /// renumbers everything after it and the saved index silently selects a different device.
+    /// The name is what identifies it; the index is only a hint about where to look first.
+    @Published var deviceIndex: Int? {
+        didSet { defaults.set(deviceIndex ?? -1, forKey: Keys.deviceIndex) }
+    }
+
+    /// Held to re-find the device, and never written to a log or the diagnostics export:
+    /// "Headset (R-Phonak hearing aid)" is health information arriving through a field nobody
+    /// thinks of as sensitive.
+    @Published var deviceName: String? {
+        didSet { defaults.set(deviceName, forKey: Keys.deviceName) }
+    }
+
+    /// Whether the remembered device is a system-audio source rather than a microphone. Kept
+    /// separately because the two are passed to the engine as different arguments.
+    @Published var deviceIsLoopback: Bool {
+        didSet { defaults.set(deviceIsLoopback, forKey: Keys.deviceIsLoopback) }
+    }
+
     /// Whether the user has ever finished setup on this machine. Absent means a genuine first
     /// run, which is what lets the app open straight onto the model picker instead of showing
     /// a window it cannot use yet.
     @Published var hasCompletedSetup: Bool {
         didSet { defaults.set(hasCompletedSetup, forKey: Keys.hasCompletedSetup) }
+    }
+
+    /// Whether the app has already explained why system audio needs the screen recording
+    /// permission. Shown once, because a warning repeated on every use stops being read.
+    @Published var hasSeenScreenCaptureExplanation: Bool {
+        didSet { defaults.set(hasSeenScreenCaptureExplanation,
+                              forKey: Keys.hasSeenScreenCaptureExplanation) }
     }
 
     /// Mirrors the system setting so views can branch without each one asking AppKit.
@@ -62,7 +92,13 @@ final class AppSettings: ObservableObject {
         alwaysOnTop = defaults.object(forKey: Keys.alwaysOnTop) as? Bool ?? false
         isCompact = defaults.bool(forKey: Keys.isCompact)
         selectedModel = defaults.string(forKey: Keys.selectedModel)
+        let savedIndex = defaults.object(forKey: Keys.deviceIndex) as? Int ?? -1
+        deviceIndex = savedIndex >= 0 ? savedIndex : nil
+        deviceName = defaults.string(forKey: Keys.deviceName)
+        deviceIsLoopback = defaults.bool(forKey: Keys.deviceIsLoopback)
         hasCompletedSetup = defaults.bool(forKey: Keys.hasCompletedSetup)
+        hasSeenScreenCaptureExplanation =
+            defaults.bool(forKey: Keys.hasSeenScreenCaptureExplanation)
     }
 
     func stepFontSize(by delta: Int) {
@@ -94,7 +130,11 @@ final class AppSettings: ObservableObject {
         static let alwaysOnTop = "alwaysOnTop"
         static let isCompact = "compactMode"
         static let selectedModel = "selectedModel"
+        static let deviceIndex = "deviceIndex"
+        static let deviceName = "deviceName"
+        static let deviceIsLoopback = "deviceIsLoopback"
         static let hasCompletedSetup = "hasCompletedSetup"
+        static let hasSeenScreenCaptureExplanation = "hasSeenScreenCaptureExplanation"
         static let compactFrame = "compactFrame"
         static let expandedFrame = "expandedFrame"
     }

@@ -53,6 +53,10 @@ struct SidebarView: View {
     /// A disclosure rather than a popup button, matching the Windows shape. The header keeps
     /// showing which model is loaded while it is closed, because that is the question it is
     /// asked most often and opening the section to answer it would be a poor trade.
+    ///
+    /// Collapsed, it is exactly as tall as the command bar on the other side of the split, so
+    /// the two bottom sections read as one band rather than two that nearly line up. Expanded
+    /// it grows upward with the list, which is the only time the heights should differ.
     private var modelSection: some View {
         VStack(alignment: .leading, spacing: 0) {
             DisclosureGroup(isExpanded: $modelSectionOpen) {
@@ -74,11 +78,28 @@ struct SidebarView: View {
                         .lineLimit(1)
                         .truncationMode(.tail)
                 }
+                // Full width and its own tap target, because a `DisclosureGroup` on macOS
+                // wires only the chevron to the binding. Its label is inert however it is
+                // shaped, so `contentShape` alone left a two-line header that could be opened
+                // only by hitting the triangle beside it.
+                .frame(maxWidth: .infinity, alignment: .leading)
                 .contentShape(Rectangle())
+                .onTapGesture {
+                    if settings.reduceMotion {
+                        modelSectionOpen.toggle()
+                    } else {
+                        withAnimation(.easeInOut(duration: 0.18)) { modelSectionOpen.toggle() }
+                    }
+                }
+                .accessibilityAddTraits(.isButton)
+                .accessibilityHint(modelSectionOpen ? "Collapses the model list"
+                                                    : "Expands the model list")
             }
             .accessibilityLabel("Speech model")
         }
-        .padding(10)
+        .padding(.horizontal, 10)
+        .frame(height: modelSectionOpen ? nil : CommandBar.height)
+        .frame(maxHeight: modelSectionOpen ? .infinity : nil, alignment: .top)
     }
 
     private func modelRow(_ entry: BackendEvent.CatalogEntry) -> some View {

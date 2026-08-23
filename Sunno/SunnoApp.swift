@@ -10,6 +10,7 @@ struct SunnoApp: App {
     @StateObject private var devices = DeviceCatalog()
     @StateObject private var chrome = WindowChrome()
     @StateObject private var backend = BackendHost()
+    @StateObject private var systemAudio = SystemAudioCapture()
 
     var body: some Scene {
         WindowGroup {
@@ -18,6 +19,7 @@ struct SunnoApp: App {
                 settings: settings,
                 devices: devices,
                 chrome: chrome,
+                backend: backend,
                 onCommand: { client.send($0) },
                 onSelectDevice: select
             )
@@ -80,6 +82,12 @@ struct SunnoApp: App {
     // MARK: - Wiring
 
     private func startUp() {
+        // Once per launch, whatever SwiftUI does with the view. `onAppear` fires again whenever
+        // the hierarchy is rebuilt, and this method replaces the engine: running it twice tore
+        // down a model that was still loading and started another, so the window never reached
+        // "listening" and no caption ever arrived. It looked like captions were broken.
+        guard backend.claimStartUp() else { return }
+
         devices.configure(httpPort: backend.httpPort)
 
         client.onEvent = { event in
@@ -91,25 +99,118 @@ struct SunnoApp: App {
             }
         }
 
-        backend.start(model: settings.selectedModel,
-                      device: nil,
-                      loopbackDevice: nil,
-                      forceCPU: settings.forceCPU)
-        client.connect(port: backend.wsPort)
+        // Start on the source that was last chosen, and start on it once. Bringing the engine
+        // up on the microphone and swapping to system audio afterwards costs a model load that
+        // is thrown away, which is half a minute of empty window for nothing.
+        guard settings.deviceName == DeviceCatalog.systemAudio.name else {
+            backend.start(model: settings.selectedModel,
+                          device: settings.deviceIsLoopback ? nil : settings.deviceIndex,
+                          loopbackDevice: settings.deviceIsLoopback ? settings.deviceIndex : nil,
+                          forceCPU: settings.forceCPU)
+            client.connect(port: backend.wsPort)
+            Task {
+                await devices.refresh()
+                reconcileSavedDevice()
+            }
+            return
+        }
 
-        Task { await devices.refresh() }
+        Task {
+            devices.select(DeviceCatalog.systemAudio)
+            await startOnSystemAudio()
+            client.connect(port: backend.wsPort)
+            await devices.refresh()
+        }
+    }
+
+    /// The saved device may have moved. Correct the setting and restart on the right one rather
+    /// than captioning whatever now happens to sit at the old index.
+    private func reconcileSavedDevice() {
+        guard settings.deviceName != nil,
+              let found = devices.resolve(index: settings.deviceIndex,
+                                          name: settings.deviceName,
+                                          isLoopback: settings.deviceIsLoopback)
+        else { return }
+
+        devices.select(found)
+        guard found.index != settings.deviceIndex else { return }
+        settings.deviceIndex = found.index
+        restartCapture(on: found)
     }
 
     private func select(_ device: DeviceCatalog.Device) {
         devices.select(device)
-        // Changing the capture source restarts the engine, which is why this is not a
-        // command on the socket: the backend takes its device from the command line and
-        // holds it open for the life of the process.
-        backend.stop()
-        backend.start(model: settings.selectedModel,
-                      device: device.isLoopback ? nil : device.index,
-                      loopbackDevice: device.isLoopback ? device.index : nil,
-                      forceCPU: settings.forceCPU)
+        settings.deviceIndex = device.index
+        settings.deviceName = device.name
+        settings.deviceIsLoopback = device.isLoopback
+        restartCapture(on: device)
+    }
+
+    /// Changing the capture source restarts the engine, which is why this is not a command on
+    /// the socket: the backend takes its device from the command line and holds it open for
+    /// the life of the process.
+    private func restartCapture(on device: DeviceCatalog.Device) {
+        guard device.isSystemAudio else {
+            systemAudio.stop()
+            backend.stop()
+            backend.start(model: settings.selectedModel,
+                          device: device.isLoopback ? nil : device.index,
+                          loopbackDevice: device.isLoopback ? device.index : nil,
+                          forceCPU: settings.forceCPU)
+            return
+        }
+        Task { await startOnSystemAudio() }
+    }
+
+    /// Bring the capture up first, then hand the engine the port it serves on. The engine is
+    /// stopped only once there is something for its replacement to connect to, so a refused
+    /// permission leaves the working engine alone rather than killing it for nothing.
+    private func startOnSystemAudio() async {
+        guard await confirmScreenCapturePermission() else { return }
+        do {
+            let port = try await systemAudio.start()
+            backend.stop()
+            backend.start(model: settings.selectedModel,
+                          device: nil, loopbackDevice: nil, pcmPort: port,
+                          forceCPU: settings.forceCPU)
+        } catch {
+            systemAudio.stop()
+            // Named exactly, and with the relaunch, because this permission never prompts.
+            // macOS returns a denial and quietly adds the app to the list instead, so
+            // somebody waiting for a dialog waits forever. Verified in the TCC log:
+            // "Service kTCCServiceScreenCapture does not allow prompting; returning denied."
+            store.reportProblem(
+                "Sunno needs permission to capture system audio. Open Privacy & Security, "
+                + "then Screen & System Audio Recording, switch Sunno on, and reopen it. "
+                + "macOS will not ask on its own.",
+                code: "screen_denied")
+        }
+    }
+
+    /// The app explains before the system asks, which is the whole remedy for the wrong noun.
+    ///
+    /// macOS files system audio under screen recording, so the prompt says Sunno "would like to
+    /// record this computer's screen" for a feature that reads no picture at all.
+    /// `docs/MACOS-PORT.md` makes this a rule rather than a nicety: for an app whose users came
+    /// to it because they cannot hear well, a prompt that reads as far more invasive than what
+    /// is happening is a barrier at exactly the wrong moment.
+    @MainActor
+    private func confirmScreenCapturePermission() async -> Bool {
+        guard !settings.hasSeenScreenCaptureExplanation else { return true }
+
+        let alert = NSAlert()
+        alert.messageText = "Sunno needs the screen recording permission to caption system audio"
+        alert.informativeText =
+            "macOS keeps the audio your Mac is playing behind that permission, so it is the one "
+            + "it will ask for next. Sunno reads no picture of your screen and keeps none. The "
+            + "audio is transcribed on this Mac and never sent anywhere."
+        alert.addButton(withTitle: "Continue")
+        alert.addButton(withTitle: "Cancel")
+        alert.alertStyle = .informational
+
+        guard alert.runModal() == .alertFirstButtonReturn else { return false }
+        settings.hasSeenScreenCaptureExplanation = true
+        return true
     }
 
     /// The allow-list. Named fields only, and deliberately no device names: a capture device

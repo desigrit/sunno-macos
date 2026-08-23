@@ -39,7 +39,32 @@ struct CaptionTextView: NSViewRepresentable {
         hoverView.words = line.words
         hoverView.textStorage?.setAttributedString(attributed())
         hoverView.alphaValue = opacity
+        hoverView.invalidateIntrinsicContentSize()
         hoverView.rebuildTooltips()
+    }
+
+    /// The height SwiftUI asks for, measured rather than guessed.
+    ///
+    /// Without this the row is invisible. An `NSTextView` inside an `NSViewRepresentable` has no
+    /// useful intrinsic height of its own — it is built to live inside an `NSScrollView` that
+    /// tells it how big to be — so SwiftUI lays it out at zero and every caption renders as an
+    /// empty row. The transcript looks blank while the events are arriving perfectly, and the
+    /// empty state does not appear either, because `lines` is not empty.
+    ///
+    /// Laying the text out against the proposed width is the only way to answer, and it is what
+    /// `NSScrollView` would otherwise be doing here.
+    func sizeThatFits(_ proposal: ProposedViewSize, nsView: NSTextView,
+                      context: Context) -> CGSize? {
+        guard let container = nsView.textContainer,
+              let layoutManager = nsView.layoutManager else { return nil }
+
+        let width = proposal.width ?? nsView.bounds.width
+        guard width > 0, width.isFinite else { return nil }
+
+        container.size = NSSize(width: width, height: .greatestFiniteMagnitude)
+        layoutManager.ensureLayout(for: container)
+        let used = layoutManager.usedRect(for: container)
+        return CGSize(width: width, height: ceil(used.height))
     }
 
     /// Builds the styled string, and records where each word landed so the hover can find it.
@@ -95,6 +120,28 @@ struct CaptionTextView: NSViewRepresentable {
 final class WordHoverTextView: NSTextView {
 
     var words: [CaptionLine.WordScore] = []
+
+    /// Recomputed from the laid-out text, so a caption that wraps to three lines is three lines
+    /// tall. `super`'s answer describes a text view that has been given a frame by a scroll
+    /// view, which is not the situation here.
+    override var intrinsicContentSize: NSSize {
+        guard let container = textContainer, let layoutManager = layoutManager else {
+            return super.intrinsicContentSize
+        }
+        layoutManager.ensureLayout(for: container)
+        return NSSize(width: NSView.noIntrinsicMetric,
+                      height: ceil(layoutManager.usedRect(for: container).height))
+    }
+
+    /// The container has to follow the width SwiftUI settles on, or the measured height
+    /// describes a line length the view never actually had.
+    override func layout() {
+        if let container = textContainer, container.size.width != bounds.width {
+            container.size = NSSize(width: bounds.width, height: .greatestFiniteMagnitude)
+            invalidateIntrinsicContentSize()
+        }
+        super.layout()
+    }
 
     /// Rebuilds one tooltip rectangle per uncertain word.
     ///
