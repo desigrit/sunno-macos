@@ -107,7 +107,8 @@ struct MainView: View {
                     // session and was forgotten: the next launch started the old one back up.
                     settings.selectedModel = model
                     onCommand(.downloadModel(model))
-                }
+                },
+                onRefreshModels: { onCommand(.listModels) }
             )
 
             VStack(spacing: 0) {
