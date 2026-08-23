@@ -1,0 +1,108 @@
+name: Sunno
+options:
+  bundleIdPrefix: com.desigrit
+  deploymentTarget:
+    macOS: "13.3"
+  createIntermediateGroups: true
+  groupSortPosition: top
+
+# Generated with XcodeGen rather than a checked-in .xcodeproj on purpose. A pbxproj is a
+# 900-line generated file that conflicts on every branch and that nobody reviews; this is
+# forty lines that say the same thing and can be read in a code review.
+#
+#   brew install xcodegen && cd mac && xcodegen generate && open Sunno.xcodeproj
+#
+# 13.3 rather than 13.0 because that is what whisper.cpp's own build-xcframework.sh targets,
+# and picking a floor below the engine's would be a promise the app cannot keep. See
+# docs/MACOS-PORT.md for why the floor is not higher: an M1 Pro floor would exclude the most
+# numerous Apple Silicon Mac there is.
+
+settings:
+  base:
+    MARKETING_VERSION: "0.1.0"
+    CURRENT_PROJECT_VERSION: "1"
+    SWIFT_VERSION: "5.9"
+    DEAD_CODE_STRIPPING: YES
+    ENABLE_HARDENED_RUNTIME: YES
+    # Notarisation requires this on every Mach-O in the bundle. Set here so it cannot be
+    # forgotten on a helper later and discovered at submission time, which is late.
+    OTHER_CODE_SIGN_FLAGS: "--timestamp"
+
+targets:
+  Sunno:
+    type: application
+    platform: macOS
+    sources:
+      - path: Sunno
+    info:
+      path: Sunno/Info.plist
+      properties:
+        CFBundleName: Sunno
+        CFBundleDisplayName: Sunno
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        LSMinimumSystemVersion: $(MACOSX_DEPLOYMENT_TARGET)
+        LSApplicationCategoryType: public.app-category.utilities
+        NSHumanReadableCopyright: "MIT licensed. Runs entirely on this Mac."
+
+        # The strings someone reads at the moment they decide. Written in the register of
+        # PRIVACY.md rather than of a legal notice: they say what is captured and what
+        # happens to it, in one sentence, because the people who use this app came to it
+        # because they cannot hear well and a vague prompt is a barrier.
+        NSMicrophoneUsageDescription: >-
+          Sunno turns what it hears into captions on this Mac. Audio is never recorded to
+          disk and never leaves this computer.
+        NSSpeechRecognitionUsageDescription: >-
+          Sunno recognises speech entirely on this Mac. Nothing is sent to any server.
+        # Only used on the ScreenCaptureKit capture path. macOS files system audio under the
+        # screen recording permission, so the app has to explain the mismatch itself before
+        # the system asks, or the prompt reads as far more invasive than what is happening.
+        NSScreenCaptureUsageDescription: >-
+          Sunno captions the audio your Mac is playing, such as a video call. macOS keeps
+          system audio behind this permission. No picture of your screen is read or kept.
+        # Used on the Core Audio process tap path, macOS 14.4 and later.
+        NSAudioCaptureUsageDescription: >-
+          Sunno captions the audio your Mac is playing, such as a video call. It is
+          transcribed on this computer and never sent anywhere.
+
+    entitlements:
+      path: Sunno/Sunno.entitlements
+      properties:
+        # Sandboxing is off while the app launches the Python engine during development.
+        # Turning it on is a phase 4 decision that depends on the audio capture route: see
+        # docs/MACOS-PORT.md, where the App Store and the Core Audio tap are shown to be
+        # mutually exclusive on current evidence.
+        com.apple.security.app-sandbox: false
+        com.apple.security.device.audio-input: true
+        # The engine serves a localhost socket, and the phone route serves the UI to the LAN.
+        com.apple.security.network.client: true
+        com.apple.security.network.server: true
+        # Required only while an interpreter with unsigned C extensions is being launched.
+        # Delete it with BackendHost.swift; it is the single entitlement that most reliably
+        # closes the App Store door.
+        com.apple.security.cs.disable-library-validation: true
+
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.desigrit.sunno
+        ENABLE_PREVIEWS: YES
+        SWIFT_STRICT_CONCURRENCY: minimal
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        CODE_SIGN_ENTITLEMENTS: Sunno/Sunno.entitlements
+      configs:
+        Debug:
+          SWIFT_ACTIVE_COMPILATION_CONDITIONS: DEBUG
+          CODE_SIGN_IDENTITY: "-"
+        Release:
+          # A real identity even for private test builds. TCC grants key to the signing
+          # identity, so an ad-hoc build loses its microphone permission on every rebuild,
+          # which reads as a permissions bug and is not one.
+          CODE_SIGN_IDENTITY: "Developer ID Application"
+
+# Note the absence of an AccentColor asset, which is deliberate. Without one,
+# Color.accentColor resolves to the system accent the user chose in System Settings, which is
+# what the Windows build does with AccentButtonStyle. Defining one in the brand teal would
+# override that everywhere and make the transport button ignore a preference the user set on
+# purpose. The teal lives in Theme.ink and is used only for the mark and the badges, which is
+# the split App.xaml already argues for.
+
