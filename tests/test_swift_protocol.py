@@ -1,9 +1,8 @@
 """The Swift decoders, checked against the backend that defines the protocol.
 
-This is the other half of `external/sunno/tests/test_protocol_contract.py`. That file lives
-in the backend's repository because that is where the wire is defined, and it holds the only
-declaration of what goes on it. This file imports that declaration through the submodule and
-points its parser at the Swift in this repository.
+This is the other half of `tests/test_protocol_contract.py`, which sits beside the engine
+because that is where the wire is defined, and which holds the only declaration of what goes
+on it. This file imports that declaration and points its parser at the Swift.
 
 **It deliberately does not carry a copy of the schema.** Two declarations of one contract
 drift, quietly, and drifting is precisely the failure the schema exists to catch. If this
@@ -27,16 +26,15 @@ import sys
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parents[1]
-SUBMODULE = HERE / "external" / "sunno"
-CONTRACT = SUBMODULE / "tests" / "test_protocol_contract.py"
+CONTRACT = HERE / "tests" / "test_protocol_contract.py"
 
 
 def load_contract():
     """Import the backend repository's contract module, with its paths aimed here.
 
-    Loaded by path rather than by name because the submodule is not a package and should not
-    be on `sys.path`: putting it there would make `import server` resolve, which is how a test
-    that is supposed to read source text ends up importing ctranslate2 instead.
+    Loaded by path rather than by name, so nothing is added to `sys.path`: putting the
+    repository root there would make `import server` resolve, which is how a test that is
+    supposed to read source text ends up importing ctranslate2 instead.
     """
     if not CONTRACT.is_file():
         return None
@@ -47,22 +45,19 @@ def load_contract():
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
 
-    # The one line that makes this work. The module defaults to looking for the client in a
-    # `mac/` directory beside the backend, which is where it used to live; here the client is
-    # the repository root.
+    # The module defaults to looking for the client in a `mac/` directory beside the engine,
+    # which is where it used to live. Here the client and the engine share a repository, so
+    # both roots are this one.
     module.SWIFT_ROOT = HERE
+    module.ROOT = HERE
+    module.SERVER = HERE / "server"
     return module
 
 
 def main() -> int:
-    if not SUBMODULE.is_dir() or not any(SUBMODULE.iterdir()):
-        print("external/sunno is empty. Run:")
-        print("  git submodule update --init --recursive")
-        return 1
-
     contract = load_contract()
     if contract is None:
-        print(f"Could not load {CONTRACT}. Is the submodule at the expected commit?")
+        print(f"Could not load {CONTRACT}.")
         return 1
 
     failures: list[str] = []
@@ -119,8 +114,7 @@ def main() -> int:
                 f"DeviceCatalog.swift ignores {sorted(missing)}, which a picker needs to tell "
                 f"microphones from output endpoints and to mark the system default.")
 
-    pinned = pinned_commit()
-    print(f"Backend pinned at {pinned}")
+    print("Engine read from server/, in this repository")
     print(f"  schema:   {len(declared)} event types, imported, not copied")
     print(f"  swift:    {len(swift_wire)} event cases, "
           f"{len(contract.swift_coding_keys())} wire fields")
@@ -135,27 +129,6 @@ def main() -> int:
 
     print("\nOK: the Swift decoders match the backend that produces the protocol.")
     return 0
-
-
-def pinned_commit() -> str:
-    """The submodule commit, read from git's own record rather than by running git.
-
-    Reported because the check is only ever as current as the pin. A green run means the Swift
-    agrees with the backend at this commit, not with whatever is on the backend's main branch,
-    and somebody reading a passing test should be able to see which.
-    """
-    head = SUBMODULE / ".git"
-    try:
-        if head.is_file():
-            # A submodule's .git is a file pointing at the real directory.
-            gitdir = head.read_text(encoding="utf-8").split("gitdir:", 1)[1].strip()
-            head = (SUBMODULE / gitdir).resolve() / "HEAD"
-        else:
-            head = head / "HEAD"
-        value = head.read_text(encoding="utf-8").strip()
-        return value[:12] if not value.startswith("ref:") else value
-    except OSError:
-        return "unknown"
 
 
 if __name__ == "__main__":

@@ -18,15 +18,27 @@ final class DeviceCatalog: ObservableObject {
         let name: String
         let isLoopback: Bool
         let isDefault: Bool
+        /// Captured by the app with ScreenCaptureKit rather than opened by the engine as a
+        /// device, because macOS keeps system audio behind a permission rather than in the
+        /// device list. Everything else about it behaves like any other choice in the picker.
+        var isSystemAudio: Bool = false
 
-        var id: String { "\(isLoopback ? "out" : "in")-\(index)" }
+        var id: String { isSystemAudio ? "system" : "\(isLoopback ? "out" : "in")-\(index)" }
     }
+
+    /// The one system-audio source macOS offers. Present regardless of what the engine
+    /// enumerates, because the engine cannot see it: `loopback.py` is WASAPI and there is no
+    /// equivalent here, so without this entry the picker's "System audio" section is a heading
+    /// with nothing under it on every Mac.
+    static let systemAudio = Device(index: -1, name: "System audio (this Mac)",
+                                    isLoopback: true, isDefault: false, isSystemAudio: true)
 
     @Published private(set) var inputs: [Device] = []
     /// Output endpoints, so what is being played can be captioned too. Kept apart from the
     /// microphones rather than mixed into one flat list: they are very different things and a
     /// picker that blends them invites capturing the wrong one silently.
     @Published private(set) var outputs: [Device] = []
+    @Published private(set) var selected: Device?
     @Published private(set) var selectedName: String?
     @Published private(set) var lastRefreshWasStale = false
 
@@ -37,7 +49,22 @@ final class DeviceCatalog: ObservableObject {
     }
 
     func select(_ device: Device) {
+        selected = device
         selectedName = device.name
+    }
+
+    /// Find a remembered device again after the list has been re-enumerated.
+    ///
+    /// By name first and index only as a fallback, which is the order that matters. Indices are
+    /// positional, so an interface plugged in since the last launch renumbers everything after
+    /// it; trusting the index would silently caption a different device, and on this app that
+    /// can mean captioning a room instead of a hearing aid.
+    func resolve(index: Int?, name: String?, isLoopback: Bool) -> Device? {
+        if name == Self.systemAudio.name { return Self.systemAudio }
+        let pool = isLoopback ? outputs : inputs
+        if let name, let byName = pool.first(where: { $0.name == name }) { return byName }
+        if let index, let byIndex = pool.first(where: { $0.index == index }) { return byIndex }
+        return nil
     }
 
     /// `fresh` re-enumerates in a child process on the backend side. Without it the backend
@@ -66,10 +93,14 @@ final class DeviceCatalog: ObservableObject {
                 .filter { $0.loopback ?? false }
                 .map { Device(index: $0.index, name: $0.name,
                               isLoopback: true, isDefault: $0.isDefaultOutput ?? false) }
+                + [Self.systemAudio]
             lastRefreshWasStale = payload.stale ?? false
         } catch {
             // A picker that fails to refresh should keep showing what it had. An empty list
             // is worse than a slightly stale one, because it offers no way to choose at all.
+            // System audio is never dropped: it does not come from the engine, so an engine
+            // that is not answering says nothing about whether it is available.
+            if outputs.isEmpty { outputs = [Self.systemAudio] }
         }
     }
 

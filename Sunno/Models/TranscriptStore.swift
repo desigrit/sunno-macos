@@ -67,8 +67,10 @@ final class TranscriptStore: ObservableObject {
     /// arriving through a field nobody thinks of as sensitive.
     @Published private(set) var deviceName: String?
 
-    @Published private(set) var level: Double = 0
-    @Published private(set) var isSpeaking: Bool = false
+    /// The two values that move at audio rate, in objects of their own so a level event ten
+    /// times a second does not invalidate every view watching this store. See `AudioMeter`.
+    let meter = AudioMeter()
+    let clock = SessionClock()
 
     @Published private(set) var problem: Problem?
     @Published private(set) var download: Download?
@@ -87,6 +89,12 @@ final class TranscriptStore: ObservableObject {
         var failed: String?
     }
 
+    /// Surfaced by the app rather than the engine, for failures the engine never sees: it
+    /// cannot report that system audio was refused, because on macOS it never touches it.
+    func reportProblem(_ message: String, code: String?) {
+        problem = Problem(message: message, code: code)
+    }
+
     func speaker(_ id: Int?) -> SpeakerRow? {
         guard let id else { return nil }
         return speakers.first { $0.id == id }
@@ -94,6 +102,8 @@ final class TranscriptStore: ObservableObject {
 
     func clear() {
         lines.removeAll()
+        // A new conversation, so the count starts over. The only thing that resets it.
+        clock.reset()
     }
 
     // MARK: - Event intake
@@ -108,6 +118,16 @@ final class TranscriptStore: ObservableObject {
             if let device = event.device { deviceName = device }
             if event.state == "listening" { problem = nil }
 
+            // The clock follows capture, not the socket. Losing the connection does not stop
+            // the microphone, and the count measures the conversation rather than any one
+            // capture run.
+            if event.state == "listening", isRunning {
+                clock.start()
+            } else if isRunning == false || event.state == "stopped" {
+                clock.pause()
+                meter.silence()
+            }
+
         case .partial, .final:
             upsert(event)
 
@@ -118,12 +138,9 @@ final class TranscriptStore: ObservableObject {
             break   // No visual today. Kept for latency work; see the contract test.
 
         case .level:
-            // Normalised from dB rather than RMS so the meter matches what the ear hears.
-            // -60 dB reads as silence, 0 as full scale.
-            if let db = event.db {
-                level = max(0, min(1, (db + 60) / 60))
-            }
-            isSpeaking = event.speaking ?? false
+            meter.update(db: event.db, speaking: event.speaking ?? false)
+            // Proof that capture is alive, which is the whole basis of the stall warning.
+            clock.sawAudio()
 
         case .roster:
             speakers = (event.speakers ?? []).map {

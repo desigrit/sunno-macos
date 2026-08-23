@@ -99,7 +99,7 @@ struct FirstRunView: View {
                     // in a description.
                     Text("\(entry.detail) \(entry.lagText)")
                         .font(.system(size: 11.5))
-                        .foregroundStyle(entry.responsive ? .secondary : .orange)
+                        .foregroundStyle(entry.responsive ? Color.secondary : Color.orange)
                         .fixedSize(horizontal: false, vertical: true)
                 }
 
