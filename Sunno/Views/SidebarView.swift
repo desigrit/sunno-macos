@@ -8,6 +8,7 @@ struct SidebarView: View {
     let onDelete: (SpeakerRow) -> Void
     let onSelectModel: (String) -> Void
 
+    @State private var modelSectionOpen = false
     @State private var pendingDownload: BackendEvent.CatalogEntry?
 
     var body: some View {
@@ -50,48 +51,65 @@ struct SidebarView: View {
         .listStyle(.sidebar)
     }
 
-    /// A pop-up button, which is what macOS uses for one-of-many when the list is longer than
-    /// a few entries. The Human Interface Guidelines put the boundary at about five and the
-    /// catalogue holds seven, so radio rows were the wrong control before the sidebar's width
-    /// is even considered.
+    /// A disclosure holding radio rows, matching the Windows shape. The header keeps showing
+    /// which model is loaded while it is closed, because that is the question it is asked most
+    /// often and opening the section to answer it would be a poor trade.
     ///
-    /// What it replaced was a `DisclosureGroup` holding those rows. Two things were wrong with
-    /// it. A disclosure on macOS only toggles from its chevron, so the header could be opened
-    /// only by hitting a triangle a few points across. And expanding it pushed seven two-line
-    /// rows into a 232 point column, which is where a menu belongs instead: a pop-up button
-    /// shows the current answer at rest and the full list, at full width, on demand.
+    /// Built out of a `Button` rather than a `DisclosureGroup`. A disclosure on macOS wires only
+    /// its chevron to the binding, and its label is inert however it is shaped, so the section
+    /// could be opened only by hitting a triangle a few points across. Owning the header means
+    /// the whole band is the target: the chevron, the words, and every empty point beside them.
+    ///
+    /// Collapsed, it is exactly as tall as the command bar on the other side of the split, so
+    /// the two bottom sections read as one band rather than two that nearly line up.
     private var modelSection: some View {
-        VStack(alignment: .leading, spacing: 3) {
-            Text("Speech model")
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(.secondary)
+        VStack(alignment: .leading, spacing: 0) {
+            Button(action: toggleModelSection) {
+                HStack(spacing: 7) {
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(.secondary)
+                        .rotationEffect(.degrees(modelSectionOpen ? 90 : 0))
 
-            Menu {
-                // Split, because the difference between them is a download. Ordering follows
-                // the catalogue, which the engine already sorts best-accuracy-first.
-                let downloaded = store.catalog.filter(\.available)
-                let available = store.catalog.filter { !$0.available }
+                    VStack(alignment: .leading, spacing: 0) {
+                        Text("Speech model")
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundStyle(.secondary)
+                        Text(store.activeModel ?? "not loaded")
+                            .font(.system(size: 11))
+                            .foregroundStyle(.tertiary)
+                            .lineLimit(1)
+                            .truncationMode(.tail)
+                    }
 
-                if !downloaded.isEmpty {
-                    Section("On this Mac") {
-                        ForEach(downloaded) { entry in modelItem(entry) }
-                    }
+                    Spacer(minLength: 0)
                 }
-                if !available.isEmpty {
-                    Section("Available to download") {
-                        ForEach(available) { entry in modelItem(entry) }
-                    }
-                }
-            } label: {
-                Text(activeLabel)
+                .padding(.horizontal, 10)
+                .frame(maxWidth: .infinity, minHeight: CommandBar.height)
+                // The hit area, and it is the whole band on purpose.
+                .contentShape(Rectangle())
             }
-            .menuStyle(.borderlessButton)
-            .fixedSize(horizontal: false, vertical: true)
+            .buttonStyle(.plain)
             .accessibilityLabel("Speech model")
-            .accessibilityValue(activeLabel)
+            .accessibilityValue(store.activeModel ?? "not loaded")
+            .accessibilityAddTraits(.isButton)
+            .accessibilityHint(modelSectionOpen ? "Collapses the model list"
+                                                : "Expands the model list")
+
+            if modelSectionOpen {
+                // Scrolls rather than grows without limit. Seven two-line rows are taller than
+                // the sidebar on a short window, and the list is the part that should give.
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 6) {
+                        ForEach(store.catalog) { entry in
+                            modelRow(entry)
+                        }
+                    }
+                    .padding(.horizontal, 10)
+                    .padding(.bottom, 10)
+                }
+            }
         }
-        .padding(.horizontal, 10)
-        .frame(height: CommandBar.height)
         .alert("Download \(pendingDownload?.name ?? "this model")?",
                isPresented: Binding(get: { pendingDownload != nil },
                                     set: { if !$0 { pendingDownload = nil } })) {
@@ -101,9 +119,17 @@ struct SidebarView: View {
             }
             Button("Cancel", role: .cancel) { pendingDownload = nil }
         } message: {
-            // Asked rather than assumed. Choosing from a menu is a light gesture and this one
-            // can spend three gigabytes, which is not something to discover afterwards.
+            // Asked rather than assumed. Choosing a row is a light gesture and this one can
+            // spend three gigabytes, which is not something to discover afterwards.
             Text(downloadPrompt)
+        }
+    }
+
+    private func toggleModelSection() {
+        if settings.reduceMotion {
+            modelSectionOpen.toggle()
+        } else {
+            withAnimation(.easeInOut(duration: 0.18)) { modelSectionOpen.toggle() }
         }
     }
 
@@ -112,34 +138,58 @@ struct SidebarView: View {
         return "\(sizeLabel(entry)) to download. \(entry.detail) \(entry.lagText)"
     }
 
-    @ViewBuilder
-    private func modelItem(_ entry: BackendEvent.CatalogEntry) -> some View {
+    private func modelRow(_ entry: BackendEvent.CatalogEntry) -> some View {
         Button {
-            // Already here, so switching is immediate. Otherwise it is a download, and the
-            // engine reloads either way, which the status line reports.
+            // Already here, so switching is immediate. Otherwise it is a download, and one
+            // worth confirming before it starts.
             if entry.available {
                 onSelectModel(entry.id)
             } else {
                 pendingDownload = entry
             }
         } label: {
-            Text(menuLabel(entry))
+            HStack(alignment: .top, spacing: 7) {
+                Image(systemName: entry.id == store.activeModel
+                      ? "largecircle.fill.circle" : "circle")
+                    .font(.system(size: 12))
+                    .foregroundStyle(entry.id == store.activeModel ? Color.accentColor : .secondary)
+                    .padding(.top, 1)
+
+                VStack(alignment: .leading, spacing: 1) {
+                    HStack(spacing: 5) {
+                        Text(entry.name)
+                            .font(.system(size: 12.5))
+                            .lineLimit(1)
+                        if entry.id == store.activeModel {
+                            badge("In use")
+                        }
+                    }
+                    Text(entry.available ? entry.lagText : "\(sizeLabel(entry)) download")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.tertiary)
+                        .lineLimit(1)
+                }
+                Spacer(minLength: 0)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .contentShape(Rectangle())
         }
-        .disabled(entry.id == store.activeModel)
+        .buttonStyle(.plain)
+        .help(entry.detail)
+        .accessibilityLabel("\(entry.name). \(entry.detail)")
+        .accessibilityAddTraits(entry.id == store.activeModel ? [.isSelected] : [])
     }
 
-    /// The current model, plus what it costs, because that is the question this control is
-    /// asked most often and reading it should not require opening anything.
-    private var activeLabel: String {
-        guard let active = store.activeModel else { return "not loaded" }
-        guard let entry = store.catalog.first(where: { $0.id == active }) else { return active }
-        return "\(entry.name) · \(entry.lagText)"
-    }
-
-    private func menuLabel(_ entry: BackendEvent.CatalogEntry) -> String {
-        entry.available
-            ? "\(entry.name) · \(entry.lagText)"
-            : "\(entry.name) · \(sizeLabel(entry))"
+    private func badge(_ text: String) -> some View {
+        Text(text)
+            .font(.system(size: 10, weight: .semibold))
+            .foregroundStyle(Theme.ink)
+            .padding(.horizontal, 6)
+            .padding(.vertical, 1.5)
+            .background(
+                RoundedRectangle(cornerRadius: 5, style: .continuous)
+                    .fill(Theme.inkSubtle)
+            )
     }
 
     private func sizeLabel(_ entry: BackendEvent.CatalogEntry) -> String {
