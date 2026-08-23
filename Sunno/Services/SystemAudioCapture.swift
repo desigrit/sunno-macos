@@ -50,15 +50,18 @@ final class SystemAudioCapture: NSObject, ObservableObject {
         self.listener = listener
 
         let port: UInt16 = try await withCheckedThrowingContinuation { continuation in
-            var resumed = false
+            // Resuming a continuation twice is a fatal error, not a warning, and the state
+            // handler is called repeatedly and from the listener's own queue. A plain captured
+            // `var` would be a data race on the one flag standing between a normal failure and
+            // a crash, so the claim is made under a lock.
+            let once = ResumeOnce()
             listener.stateUpdateHandler = { state in
-                guard !resumed else { return }
                 switch state {
                 case .ready:
-                    resumed = true
+                    guard once.claim() else { return }
                     continuation.resume(returning: listener.port?.rawValue ?? 0)
                 case .failed(let error):
-                    resumed = true
+                    guard once.claim() else { return }
                     continuation.resume(throwing: error)
                 default:
                     break
@@ -139,6 +142,20 @@ final class SystemAudioCapture: NSObject, ObservableObject {
         var errorDescription: String? {
             switch self { case .message(let text): return text }
         }
+    }
+}
+
+/// One-shot claim, so exactly one caller may resume a continuation.
+private final class ResumeOnce: @unchecked Sendable {
+    private let lock = NSLock()
+    private var claimed = false
+
+    func claim() -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        guard !claimed else { return false }
+        claimed = true
+        return true
     }
 }
 
