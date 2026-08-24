@@ -666,6 +666,67 @@ download that runs 4.7x over budget**. The probe is a BLAS matmul benchmark, whi
 extremely good at and which says nothing about int8 transformer decode. Populating a macOS table
 is left undone deliberately, and the README warns users in the meantime.
 
+### WhisperKit, measured
+
+The engine question is no longer a plan. `whisperkit-service/` is a small Swift executable that
+loads WhisperKit and decodes audio handed to it over a pipe, and the same six seconds of speech
+was put through both engines on the same machine.
+
+| Model | CTranslate2, processor | WhisperKit, GPU and Neural Engine | Gain |
+|---|---|---|---|
+| base | 698 ms | **136 ms** | 5.1x |
+| small | 1177 ms | **370 ms** | 3.2x |
+| medium | 2683 ms | **1362 ms** | 2.0x |
+| large-v3 | 4684 ms | **2497 ms** | 1.9x |
+
+**The phase 1 gate passes.** The criterion was WhisperKit clearing `small` comfortably inside
+1000 ms, and 370 ms is comfortable. `small` moves from over budget to usable and `medium` comes
+within sight of it, on a machine where the CPU path cleared neither. Recorded on AC; the battery
+figure this document also asks for is still outstanding.
+
+Three things fell out of building it that change what is written above.
+
+**WhisperKit no longer forces macOS 14.** The package moved to `argmaxinc/argmax-oss-swift` and
+declares `.macOS(.v13)`, so the 13.3 floor survives. The reasoning that made 14.4 attractive
+still holds for the Core Audio tap, but the engine no longer requires it.
+
+**Core ML spreads the work across the chip by default.** `ModelComputeOptions` sends the mel and
+encoder to the GPU and the text decoder to the Neural Engine without being asked. There is no
+hardware tier to write: a machine with more of either is used more, which is the property that
+makes this scale to hardware nobody here owns.
+
+**It builds with the Command Line Tools.** SwiftPM ships with them, so the engine does not become
+the one part of the project that needs Xcode.
+
+### The clarity score does NOT transfer unchanged
+
+This document expected it to, on the argument that WhisperKit produces `avgLogprob` through the
+same mechanism faster-whisper does, and asked for the check anyway. The check says otherwise.
+
+The same clips, decoded by both engines through `small`, with `_clarity_from_logprob` applied:
+
+| Clip | WhisperKit | faster-whisper | Clarity shown |
+|---|---|---|---|
+| clean | -0.0625 | -0.2008 | **100** against 89 |
+| noisy | -0.0792 | -0.2193 | **100** against 87 |
+| very noisy | -0.5667 | -1.0877 | **48** against 0 |
+
+WhisperKit's figure is consistently about a third to a half of faster-whisper's magnitude. Pushed
+through the existing mapping it reads 100 where Windows reads 89, and 48 where Windows reads 0.
+
+That is the failure this document named: "a distribution shift would silently change what the
+number means". The number is shown to somebody deciding whether they were heard, so an optimistic
+one is worse than none. **`_clarity_from_logprob` needs re-deriving before the clarity badge ships
+on a WhisperKit engine**, and it is now known on the first day rather than in phase 3, which is
+what the check was for.
+
+Word probabilities came out closer: the lowest word in each clip was 0.530 against 0.457, 0.560
+against 0.544, and 0.070 against 0.080. The 0.55 threshold is directionally sound but flags fewer
+words on WhisperKit, so it wants the same treatment.
+
+Both readings come from three clips on one model, which is enough to show the shift and not
+enough to calibrate against. A real calibration set is the next measurement.
+
 ### Three unverified claims settled
 
 - **ScreenCaptureKit reaches system audio, and an audio-only stream is not needed.** A 2x2 screen

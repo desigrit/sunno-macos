@@ -23,3 +23,6 @@ __pycache__/
 
 # The engine venv, created by scripts/setup-engine.sh
 .venv/
+
+# SwiftPM build products for the WhisperKit service
+whisperkit-service/.build/
