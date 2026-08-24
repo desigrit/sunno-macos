@@ -182,6 +182,7 @@ window alive and reconnecting instead of taking the app down mid-conversation.
 | `ui/` | Browser client, for the phone or handheld route |
 | `whisperkit-service/` | Swift decode service, so Whisper reaches the Neural Engine |
 | `scripts/` | Engine setup |
+| `docs/HANDOVER.md` | The full state of the work: what is built, measured, parked and next |
 | `docs/MACOS-PORT.md` | The decisions, the evidence, and what is still unverified |
 | `docs/macos-mockup.html` | The approved interface, screen by screen |
 

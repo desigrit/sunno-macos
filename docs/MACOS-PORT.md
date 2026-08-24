@@ -751,12 +751,15 @@ which is why this file records rejected alternatives and measurements rather tha
 
 In order:
 
-1. `docs/MACOS-PORT.md`, this file. The decisions, the evidence, and what is still unverified.
-2. `docs/macos-mockup.html`, the approved UI. Open it in a browser. Every screen, the macOS control
+1. `docs/HANDOVER.md`, which is the state of the work: what is built, what every measurement
+   said, what is deliberately parked and what to do next. Read it first if you are picking this
+   up cold; it is written for exactly that.
+2. `docs/MACOS-PORT.md`, this file. The decisions, the evidence, and what is still unverified.
+3. `docs/macos-mockup.html`, the approved UI. Open it in a browser. Every screen, the macOS control
    mapping, and the three places a macOS pattern conflicts with the Windows shape.
-3. `README.md`, which is now written for somebody using the app rather than building it.
-4. `Sunno/` and `server/`, the app and the engine it runs.
-5. `docs/CONTEXT.md` in [desigrit/sunno](https://github.com/desigrit/sunno), the project context
+4. `README.md`, which is now written for somebody using the app rather than building it.
+5. `Sunno/` and `server/`, the app and the engine it runs.
+6. `docs/CONTEXT.md` in [desigrit/sunno](https://github.com/desigrit/sunno), the project context
    and everything learned building the Windows app. Read it if you have not worked on Sunno
    before. It stays there because most of what it records is about the pipeline, and it is the
    one thing worth crossing repositories for.
