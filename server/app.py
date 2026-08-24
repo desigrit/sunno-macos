@@ -430,6 +430,24 @@ async def run(settings: Settings, args: argparse.Namespace) -> None:
     chosen_model = settings.model_size
     downloading = False
 
+    def model_backing(model_id: str):
+        """Whether a model is here, and how to fetch it, for the engine that will decode it.
+
+        The Core ML weights WhisperKit needs are a different artifact from the CTranslate2 ones,
+        living in a different place and downloaded by a different mechanism. Asking the wrong
+        one is why the app could sit on "Loading the model" for the length of a multi-gigabyte
+        download: the CTranslate2 weights were present, so nothing thought a download was
+        happening, while WhisperKit quietly fetched its own.
+        """
+        from . import models as model_catalog
+        from .engine import resolve_engine
+
+        if resolve_engine(args.engine, model_id) == "whisperkit":
+            from . import asr_whisperkit
+
+            return asr_whisperkit.model_is_available(model_id), asr_whisperkit.download_model
+        return model_catalog.is_available(model_id).available, model_catalog.download
+
     async def ensure_model(model_id: str) -> None:
         """Download a model if it isn't cached, reporting progress, then release the loader."""
         nonlocal chosen_model, downloading
@@ -438,9 +456,8 @@ async def run(settings: Settings, args: argparse.Namespace) -> None:
         downloading = True
         chosen_model = model_id
         try:
-            from . import models as model_catalog
-
-            if not model_catalog.is_available(model_id).available:
+            present, fetch = model_backing(model_id)
+            if not present:
                 emit({"type": "download_started", "model": model_id})
                 print(f"Downloading {model_id} ...", flush=True)
 
@@ -460,7 +477,7 @@ async def run(settings: Settings, args: argparse.Namespace) -> None:
                         "percent": round(100 * done / total, 1) if total else 0.0,
                     })
 
-                await asyncio.to_thread(model_catalog.download, model_id, on_progress)
+                await asyncio.to_thread(fetch, model_id, on_progress)
                 print(f"Downloaded {model_id}", flush=True)
 
             emit({"type": "download_complete", "model": model_id})
@@ -477,7 +494,7 @@ async def run(settings: Settings, args: argparse.Namespace) -> None:
         # Decide up front whether we can load, or must ask the user to pick and download.
         from . import models as model_catalog
 
-        if model_catalog.is_available(settings.model_size).available:
+        if model_backing(settings.model_size)[0]:
             model_ready.set()
         else:
             catalog = await asyncio.to_thread(

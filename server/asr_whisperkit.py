@@ -60,6 +60,122 @@ def is_available() -> bool:
     return service_binary() is not None
 
 
+def weights_root() -> Path:
+    """Where the Core ML weights go.
+
+    Not WhisperKit's default, which is ~/Documents/huggingface: several gigabytes of model
+    weights do not belong in the folder somebody keeps their own files in, and nothing there
+    explains what put them there. This is the same directory the rest of the app writes to, so
+    it honours Sunno_DATA_DIR with everything else.
+    """
+    from .paths import data_dir
+
+    return data_dir() / "whisperkit"
+
+
+class _Service:
+    """One short-lived service process, for the calls made outside a loaded engine."""
+
+    def __init__(self) -> None:
+        binary = service_binary()
+        if binary is None:
+            raise WhisperKitServiceError(
+                "The WhisperKit service has not been built. Run scripts/setup-engine.sh."
+            )
+        self.proc = subprocess.Popen([str(binary)], stdin=subprocess.PIPE, stdout=subprocess.PIPE)
+
+    def __enter__(self) -> "_Service":
+        return self
+
+    def __exit__(self, *exc) -> None:
+        try:
+            if self.proc.stdin and not self.proc.stdin.closed:
+                self.proc.stdin.close()
+            self.proc.wait(timeout=5)
+        except (OSError, subprocess.TimeoutExpired):
+            self.proc.kill()
+
+
+def model_is_available(model_id: str) -> bool:
+    """Whether the Core ML weights are already here.
+
+    A different question from `models.is_available`, which answers for the CTranslate2 weights.
+    Both can be true or false independently, and asking the wrong one is what put the app on
+    "Loading the model" for the length of a multi-gigabyte download.
+    """
+    try:
+        with _Service() as service:
+            reply = _exchange(service.proc, {
+                "op": "available",
+                "model": model_id,
+                "download_base": str(weights_root()),
+            })
+        return bool(reply.get("available"))
+    except Exception:
+        return False
+
+
+def download_model(model_id: str, on_progress=None) -> None:
+    """Fetch the Core ML weights, reporting progress in the shape app.py already emits."""
+    weights_root().mkdir(parents=True, exist_ok=True)
+    with _Service() as service:
+        _exchange(
+            service.proc,
+            {"op": "prepare", "model": model_id, "download_base": str(weights_root())},
+            on_progress=on_progress,
+        )
+
+
+def _read_frame(proc) -> dict:
+    header = _read_exactly(proc, 4)
+    (size,) = struct.unpack("<I", header)
+    return json.loads(_read_exactly(proc, size))
+
+
+def _read_exactly(proc, count: int) -> bytes:
+    """A pipe hands back what is buffered, so one read is not a frame."""
+    chunks: list[bytes] = []
+    remaining = count
+    while remaining > 0:
+        chunk = proc.stdout.read(remaining)
+        if not chunk:
+            raise WhisperKitServiceError("the speech service closed mid-reply")
+        chunks.append(chunk)
+        remaining -= len(chunk)
+    return b"".join(chunks)
+
+
+def _exchange(proc, header: dict, audio=None, on_progress=None) -> dict:
+    """Send one request and read frames until a terminal one arrives.
+
+    A download reports itself as it goes, so anything carrying `progress` is an update rather
+    than an answer, and the loop keeps reading.
+    """
+    if proc.poll() is not None:
+        raise WhisperKitServiceError("the speech service exited")
+    if audio is not None:
+        header = {**header, "samples": int(audio.size)}
+
+    body = json.dumps(header).encode("utf-8")
+    try:
+        proc.stdin.write(struct.pack("<I", len(body)) + body)
+        if audio is not None:
+            proc.stdin.write(np.ascontiguousarray(audio, dtype="<f4").tobytes())
+        proc.stdin.flush()
+    except (BrokenPipeError, OSError) as exc:
+        raise WhisperKitServiceError("the speech service stopped listening") from exc
+
+    while True:
+        reply = _read_frame(proc)
+        if reply.get("progress") is None:
+            if not reply.get("ok"):
+                raise WhisperKitServiceError(reply.get("error", "the service reported a failure"))
+            return reply
+        if on_progress is not None:
+            fraction = float(reply["progress"])
+            on_progress(int(fraction * 1000), 1000)
+
+
 class WhisperKitServiceError(RuntimeError):
     """The service could not be started or stopped answering."""
 
@@ -88,44 +204,21 @@ class WhisperKitEngine:
             # output goes, rather than disappearing into a pipe nobody drains.
         )
 
-        reply = self._call({"op": "load", "model": settings.model_size})
-        if not reply.get("ok"):
+        try:
+            reply = self._call({
+                "op": "load",
+                "model": settings.model_size,
+                "download_base": str(weights_root()),
+            })
+        except Exception:
             self.close()
-            raise WhisperKitServiceError(reply.get("error", "the model would not load"))
+            raise
         self.compute_units = reply.get("compute_units", "unknown")
 
     # --- wire ----------------------------------------------------------
 
     def _call(self, header: dict, audio: np.ndarray | None = None) -> dict:
-        if self._proc.poll() is not None:
-            raise WhisperKitServiceError("the speech service exited")
-        if audio is not None:
-            header = {**header, "samples": int(audio.size)}
-
-        body = json.dumps(header).encode("utf-8")
-        try:
-            self._proc.stdin.write(struct.pack("<I", len(body)) + body)
-            if audio is not None:
-                self._proc.stdin.write(np.ascontiguousarray(audio, dtype="<f4").tobytes())
-            self._proc.stdin.flush()
-        except (BrokenPipeError, OSError) as exc:
-            raise WhisperKitServiceError("the speech service stopped listening") from exc
-
-        length = self._read_exactly(4)
-        (size,) = struct.unpack("<I", length)
-        return json.loads(self._read_exactly(size))
-
-    def _read_exactly(self, count: int) -> bytes:
-        """A pipe hands back what is buffered, so one read is not a frame."""
-        chunks: list[bytes] = []
-        remaining = count
-        while remaining > 0:
-            chunk = self._proc.stdout.read(remaining)
-            if not chunk:
-                raise WhisperKitServiceError("the speech service closed mid-reply")
-            chunks.append(chunk)
-            remaining -= len(chunk)
-        return b"".join(chunks)
+        return _exchange(self._proc, header, audio)
 
     # --- decoding ------------------------------------------------------
 
@@ -139,6 +232,13 @@ class WhisperKitEngine:
                 # Temperature fallback belongs to the final pass alone: provisional text is
                 # replaced moments later and a retry would blow its latency budget.
                 "temperature": 0.0,
+                # The hallucination suppression, from the same constants asr.py hands
+                # faster-whisper. Leaving them off is not a small difference: Whisper decodes
+                # noise into invented sentences and runs to the token limit doing it, and two
+                # seconds of noise took 110 seconds on large-v3 before these were passed.
+                "no_speech_threshold": self.settings.no_speech_threshold,
+                "log_prob_threshold": self.settings.log_prob_threshold,
+                "compression_ratio_threshold": self.settings.compression_ratio_threshold,
             },
             audio,
         )
