@@ -126,23 +126,31 @@ Two things are worth knowing, because both surprised me:
 
 No captioning system is perfect, and anyone who tells you otherwise is selling something.
 
-- **The engine runs on the processor only, and that is the ceiling on this port.** CTranslate2
-  has no Metal or Neural Engine backend, so none of the Mac's fast hardware is used yet.
-  Measured on an M1 Max, decoding six seconds of speech at the settings the app actually uses:
+- **The bigger models still lag, though far less than they did.** Whisper runs through Core ML
+  here, so the Neural Engine and the GPU do the work rather than the processor. Measured on an
+  M1 Max, decoding six seconds of speech at the settings the app actually uses:
 
-  | Model | Decode | Keeps up? |
-  |---|---|---|
-  | Whisper base | 0.7 s | yes |
-  | Whisper small | 1.2 s | marginal |
-  | Whisper medium | 2.7 s | no |
-  | Whisper large-v3 | 4.7 s | no |
-  | Zipformer, Kroko | streaming | yes |
+  | Model | Processor | Neural Engine | Keeps up? |
+  |---|---|---|---|
+  | Whisper base | 0.7 s | **0.14 s** | yes |
+  | Whisper small | 1.2 s | **0.37 s** | yes |
+  | Whisper medium | 2.7 s | **1.4 s** | no |
+  | Whisper large-v3 | 4.7 s | **2.5 s** | no |
+  | Zipformer, Kroko | streaming | streaming | yes |
 
-  **The delay estimates in the model picker are wrong on Apple Silicon**, in the optimistic
-  direction, because they are scaled from measurements taken on a Windows machine. They read
-  three to seven times faster than the truth, so the picker will offer you `large-v3` and it will
-  not keep up. Choose `base` until this is fixed.
-  [`docs/MACOS-PORT.md`](docs/MACOS-PORT.md) explains what a native engine would buy.
+  `small` is the sweet spot: accurate enough for most rooms and comfortably ahead of the
+  conversation. `large-v3` is the most accurate on accented speech and you will see it arrive
+  late.
+
+  **The delay estimates in the model picker are wrong**, because they are scaled from
+  measurements taken on a Windows machine and no Apple Silicon figure has replaced them. They
+  are now wrong in both directions: too optimistic about `large-v3`, and too pessimistic about
+  what the Neural Engine does with the smaller models. Treat the table above as the real answer.
+  [`docs/MACOS-PORT.md`](docs/MACOS-PORT.md) has the measurements behind it.
+- **The clarity score is off on this engine.** It is hidden rather than shown wrong: WhisperKit
+  reports the confidence Whisper had in a different range from the Windows build, so the badge
+  stays away until the mapping is re-derived rather than telling you that you were heard more
+  clearly than you were.
 - **Microphone placement matters more than the model.** Moving from a distant tabletop mic to a
   close talking one is worth roughly twice the accuracy, which is more than any model change
   available.
@@ -158,9 +166,9 @@ genuinely useful.
 ## How it fits together
 
 ```
-microphone ─┐
-            ├─► resample 16 kHz ─► Silero VAD ─► Whisper ─► WebSocket ─► SwiftUI app
-system audio┘        (ScreenCaptureKit, over a local socket)
+microphone ─┐                                    ┌─ WhisperKit, on the Neural Engine
+            ├─► resample 16 kHz ─► Silero VAD ─►─┤                                  ─► SwiftUI app
+system audio┘   (ScreenCaptureKit)               └─ CTranslate2, on the processor
 ```
 
 A Python engine does capture and recognition. A SwiftUI app displays the results and talks to it
@@ -172,6 +180,7 @@ window alive and reconnecting instead of taking the app down mid-conversation.
 | `Sunno/` | The macOS app: SwiftUI views, the socket, the window chrome |
 | `server/` | Python engine: capture, VAD, recognition, speaker labelling |
 | `ui/` | Browser client, for the phone or handheld route |
+| `whisperkit-service/` | Swift decode service, so Whisper reaches the Neural Engine |
 | `scripts/` | Engine setup |
 | `docs/MACOS-PORT.md` | The decisions, the evidence, and what is still unverified |
 | `docs/macos-mockup.html` | The approved interface, screen by screen |
