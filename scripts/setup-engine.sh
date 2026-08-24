@@ -25,8 +25,32 @@ echo "==> installing"
 ./.venv/bin/python -m pip install --quiet --upgrade pip
 ./.venv/bin/python -m pip install --quiet -r requirements-macos.txt
 
+echo "==> building the WhisperKit service"
+# Optional, and the engine still runs without it: CTranslate2 decodes on the processor and is
+# the fallback. But on Apple Silicon that leaves the GPU and the Neural Engine idle, and the
+# same speech decodes three to five times faster through Core ML, so this is built by default.
+#
+# SwiftPM keeps its checkouts as bare repositories, which git refuses to read when
+# safe.bareRepository is set to "explicit". Overridden for this command only, through the
+# environment, rather than by writing to anybody's global config.
+if (cd whisperkit-service \
+      && GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=safe.bareRepository GIT_CONFIG_VALUE_0=all \
+         swift build -c release >/dev/null 2>&1); then
+  echo "    built, so Whisper will run on the Neural Engine and the GPU"
+else
+  echo "    could not build it; the engine will fall back to the processor"
+  echo "    (run 'cd whisperkit-service && swift build -c release' to see why)"
+fi
+
 echo "==> checking"
-./.venv/bin/python -c "import server.app; print('    the engine imports cleanly')"
+./.venv/bin/python -c "
+import server.app
+from server.engine import available_engines, resolve_engine
+have = available_engines()
+print('    the engine imports cleanly')
+print('    speech engine:', resolve_engine('auto', 'base'),
+      '(neural engine)' if have['whisperkit'] else '(processor only)')
+"
 
 cat <<'DONE'
 

@@ -67,10 +67,15 @@ def available_engines() -> dict[str, bool]:
     """
     import importlib.util
 
+    from .asr_whisperkit import is_available as whisperkit_available
+
     return {
         "ct2": importlib.util.find_spec("ctranslate2") is not None,
         "onnx": importlib.util.find_spec("onnxruntime_genai") is not None,
         "stream": importlib.util.find_spec("sherpa_onnx") is not None,
+        # A built executable rather than an importable module: WhisperKit is Swift, and the
+        # decode runs in whisperkit-service/ beside this package.
+        "whisperkit": whisperkit_available(),
     }
 
 
@@ -103,8 +108,14 @@ def resolve_engine(preference: str = "auto", model_id: str | None = None) -> str
                 )
             return "stream"
 
-    if preference in ("ct2", "onnx", "stream"):
+    if preference in ("ct2", "onnx", "stream", "whisperkit"):
         return preference
+    # WhisperKit before CTranslate2 when it is built, because on this platform it is not a
+    # close call: Core ML reaches the Neural Engine and the GPU, CTranslate2 reaches neither,
+    # and the same six seconds of speech decode three to five times faster through it. Opt in
+    # by building the service; `--engine ct2` still overrides.
+    if have["whisperkit"]:
+        return "whisperkit"
     if have["ct2"]:
         return "ct2"
     if have["onnx"]:
@@ -132,6 +143,10 @@ def create_engine(settings: "Settings", preference: str = "auto") -> SpeechEngin
         from .asr_onnx import OnnxEngine
 
         return OnnxEngine(settings)
+    if kind == "whisperkit":
+        from .asr_whisperkit import WhisperKitEngine
+
+        return WhisperKitEngine(settings)
 
     from .asr import CTranslate2Engine
 

@@ -186,6 +186,12 @@ def parse_args() -> tuple[Settings, argparse.Namespace]:
     )
     parser.add_argument("--wav", default=None, help="replay a WAV file instead of the mic")
     parser.add_argument(
+        "--engine", default="auto", choices=("auto", "whisperkit", "ct2", "onnx", "stream"),
+        help="which speech engine to use. 'auto' prefers WhisperKit on macOS when its service "
+             "has been built, because it reaches the Neural Engine and the GPU where "
+             "CTranslate2 reaches neither",
+    )
+    parser.add_argument(
         "--pcm-port", type=int, default=None,
         help="localhost port serving mono float32 PCM at 16 kHz, used by the macOS client to "
              "hand over system audio it captured with ScreenCaptureKit",
@@ -518,7 +524,7 @@ async def run(settings: Settings, args: argparse.Namespace) -> None:
 
         from .engine import create_engine
 
-        engine = await asyncio.to_thread(create_engine, settings)
+        engine = await asyncio.to_thread(create_engine, settings, args.engine)
         warmup_ms = await asyncio.to_thread(engine.warmup)
         print(f"Model ready (warmup {warmup_ms:.0f} ms)")
 
