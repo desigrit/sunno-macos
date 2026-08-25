@@ -26,3 +26,7 @@ __pycache__/
 
 # SwiftPM build products for the WhisperKit service
 whisperkit-service/.build/
+
+# Cached relocatable Python for packaging
+.cache/
+dist/

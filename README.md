@@ -58,13 +58,38 @@ sensitive. And the diagnostics report is built as an allow-list rather than a fi
 filter has to anticipate every category of secret and an allow-list only emits what somebody
 deliberately put on it.
 
-## Requirements
+## Installing
 
-Apple Silicon, macOS 13.3 or later. The first run downloads a speech model.
+Apple Silicon, macOS 13.3 or later.
+
+**[Download Sunno for macOS](https://github.com/desigrit/sunno-macos/releases/latest)** — about
+80 MB. Unzip it and drag **Sunno** to your Applications folder. It carries its own Python and
+speech service, so there is nothing else to install.
+
+**The first time you open it, macOS will refuse.** It will say Sunno "cannot be opened because
+Apple cannot check it for malicious software", which means only that this build is not notarised.
+To get past it:
+
+1. **System Settings → Privacy & Security**
+2. Scroll to the bottom. There is a line about Sunno being blocked, and a button: **Open Anyway**
+3. Open Sunno again
+
+You only do that once. There is no way around it short of an Apple Developer Program membership,
+and macOS 15 removed the Control-click shortcut that used to skip it. If you would rather not
+trust a build you cannot verify, that is a reasonable position — the source is all here, and
+[building it yourself](#building) takes a few minutes.
+
+**Two permissions.** Sunno asks for the microphone the first time you record. For captioning what
+your Mac is *playing* — a call, a film, a video — it also needs **Privacy & Security → Screen &
+System Audio Recording**, and macOS never prompts for that one. Switch Sunno on there yourself
+and reopen it. The app explains this at the point you need it.
+
+**Then pick a model**, which downloads it. `small` is the one to choose: accurate enough for most
+rooms and comfortably ahead of the conversation. The first launch after a download sits on
+"Loading the model" for a minute or so while Core ML compiles it for your particular Mac. That
+happens once per model and never again.
 
 ## Building
-
-There is no installer yet. Build it from source.
 
 ```bash
 git clone https://github.com/desigrit/sunno-macos.git
@@ -72,6 +97,21 @@ cd sunno-macos
 ./scripts/setup-engine.sh          # the Python engine, in a .venv
 brew install xcodegen && xcodegen generate && open Sunno.xcodeproj
 ```
+
+To build the distributable app rather than a development one:
+
+```bash
+./scripts/package-app.sh           # -> dist/Sunno.app and the zip beside it
+./scripts/publish-release.sh       # -> attaches the zip to the GitHub release
+```
+
+`package-app.sh` produces an app that does not need this repository, a `.venv`, Homebrew or even
+Xcode's Command Line Tools on the machine that runs it: it downloads a relocatable Python, puts
+it inside the bundle with the engine, and signs the whole thing. Speech models stay out of it and
+download on first use, which is the difference between an 80 MB download and a 5 GB one.
+
+`publish-release.sh` replaces the asset on an existing release rather than making a new one, so
+the download link never changes.
 
 `project.yml` is the source of truth and the `.xcodeproj` is generated rather than committed: a
 pbxproj conflicts on every branch and nobody reviews it, where forty lines of YAML can be read in
@@ -181,7 +221,7 @@ window alive and reconnecting instead of taking the app down mid-conversation.
 | `server/` | Python engine: capture, VAD, recognition, speaker labelling |
 | `ui/` | Browser client, for the phone or handheld route |
 | `whisperkit-service/` | Swift decode service, so Whisper reaches the Neural Engine |
-| `scripts/` | Engine setup |
+| `scripts/` | Engine setup, packaging, releasing, screenshots |
 | `docs/HANDOVER.md` | The full state of the work: what is built, measured, parked and next |
 | `docs/MACOS-PORT.md` | The decisions, the evidence, and what is still unverified |
 | `docs/macos-mockup.html` | The approved interface, screen by screen |

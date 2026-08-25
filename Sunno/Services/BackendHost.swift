@@ -66,14 +66,28 @@ final class BackendHost: ObservableObject {
 
     /// Where the engine lives.
     ///
-    /// In this repository, not another one. The Python engine is vendored at `server/` so the
-    /// macOS app is self-contained: it clones, builds and runs without a second checkout, and
-    /// improvements that belong to both platforms are pushed to both rather than shared through
-    /// a submodule that couples their release cycles.
+    /// Two layouts, and the shipped one is checked first.
     ///
-    /// Walks up from the app bundle rather than hardcoding a relative depth, because the depth
-    /// changes with the build configuration and the failure is a silent "engine never starts".
-    private func developmentRoot() -> URL? {
+    /// **Inside the bundle**, at `Contents/Resources/engine`, which is what a downloaded copy
+    /// has: its own Python, `server/`, `ui/` and the WhisperKit service. Nothing outside the
+    /// app is required, which is the whole point — a copy handed to somebody else has never
+    /// seen this repository and never will.
+    ///
+    /// **Beside the checkout**, found by walking up from the bundle, which is what a
+    /// development build has. Walking rather than hardcoding a depth, because the depth changes
+    /// with the build configuration and the failure is a silent "engine never starts".
+    ///
+    /// The bundled copy wins deliberately. A developer running a shipped build should get the
+    /// engine that was shipped with it, not whatever happens to be in a checkout above it.
+    private func engineRoot() -> URL? {
+        let bundled = Bundle.main.bundleURL
+            .appendingPathComponent("Contents/Resources/engine")
+            .standardizedFileURL
+        if FileManager.default.fileExists(atPath:
+            bundled.appendingPathComponent("server/app.py").path) {
+            return bundled
+        }
+
         var directory = Bundle.main.bundleURL
         for _ in 0..<8 {
             directory = directory.deletingLastPathComponent()
@@ -86,11 +100,14 @@ final class BackendHost: ObservableObject {
     }
 
     private func interpreter(in root: URL) -> URL? {
-        // A venv inside the backend checkout, then a bare python3 on PATH. No bundled runtime:
-        // this class exists only for development, and bundling an interpreter is the thing it
-        // is meant to avoid.
-        let venv = root.appendingPathComponent(".venv/bin/python")
-        if FileManager.default.fileExists(atPath: venv.path) { return venv }
+        // The interpreter that shipped with the engine, then a development venv, then whatever
+        // is on the machine. The first is the only one a downloaded copy can count on: a Mac
+        // that has never had Xcode's Command Line Tools installed has no usable python3 at all,
+        // and /usr/bin/python3 there is a stub that offers to install them.
+        for candidate in ["python/bin/python3", ".venv/bin/python"] {
+            let path = root.appendingPathComponent(candidate)
+            if FileManager.default.fileExists(atPath: path.path) { return path }
+        }
 
         for candidate in ["/opt/homebrew/bin/python3", "/usr/bin/python3", "/usr/local/bin/python3"] {
             if FileManager.default.fileExists(atPath: candidate) {
@@ -110,7 +127,7 @@ final class BackendHost: ObservableObject {
         // updating: a model downloaded a minute ago still listed as missing, for instance.
         Self.reapOrphanedChild()
 
-        guard let root = developmentRoot() else {
+        guard let root = engineRoot() else {
             status = .failed("Could not find the speech engine. It should be at server/ "
                              + "beside the app.")
             return
