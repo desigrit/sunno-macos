@@ -10,7 +10,8 @@ already cost a day of measurement, or worse, re-introducing a bug that has alrea
 once. Where a section states a number, that number was measured on the machine described in
 [Environment](#16-environment-what-this-was-built-on) unless it says otherwise.
 
-Last updated at commit `87dacd3`.
+Last updated at commit `d128594`, which is where the app first became something you could download
+and run rather than something you had to build.
 
 ---
 
@@ -34,6 +35,7 @@ Last updated at commit `87dacd3`.
 16. [Environment: what this was built on](#16-environment-what-this-was-built-on)
 17. [How to verify you have not broken anything](#17-how-to-verify-you-have-not-broken-anything)
 18. [File index](#18-file-index)
+19. [Shipping it](#19-shipping-it)
 
 ---
 
@@ -182,6 +184,10 @@ There is one live branch in the other repository from this work:
 - **Both contract tests pass**, and the protocol one now checks against the engine that actually
   runs rather than a pinned commit.
 - **A fresh clone works**: clone, `./scripts/setup-engine.sh`, build, run. Verified end to end.
+- **A packaged app works with no clone at all.** `./scripts/package-app.sh` builds a
+  self-contained bundle carrying its own Python and engine; it was downloaded from the release,
+  unzipped on a clean path and run, with the interpreter resolving inside the bundle. See
+  [19](#19-shipping-it).
 
 ### What does not work, or is deliberately off
 
@@ -190,7 +196,9 @@ There is one live branch in the other repository from this work:
 | Clarity score | Hidden on the WhisperKit engine. The badge does not appear | [13.1](#131-the-clarity-score) |
 | Model picker delay estimates | Wrong, in both directions. Known and accepted for now | [13.2](#132-the-model-picker-lies) |
 | `add_context` | Accepted and ignored on the WhisperKit engine | [13.3](#133-add_context-is-ignored) |
-| App Sandbox | Off. Deferred until distribution is decided | [13.5](#135-distribution) |
+| App Sandbox | Off, and it stays off while the app carries a Python interpreter | [13.5](#135-distribution) |
+| Notarisation | None. First launch needs Privacy & Security → Open Anyway | [19.4](#194-gatekeeper-and-the-step-users-cannot-skip) |
+| Updates | No mechanism. A new version is a new download | [19.5](#195-releasing) |
 | Screen recording permission | Must be granted by hand; macOS never prompts | [15](#15-landmines) |
 | Speaker embedding model | Not present, so speaker labelling is off in this checkout | [13.4](#134-speaker-labelling-is-off-in-this-checkout) |
 
@@ -1150,11 +1158,15 @@ ships it.
 
 ### 13.5 Distribution
 
-Undecided, and deliberately so. The App Sandbox is off, notarisation has not been attempted, there
-is no update mechanism, and `project.yml` still carries
-`com.apple.security.cs.disable-library-validation` — which is needed only while an interpreter with
-unsigned C extensions is being launched, and which is the single entitlement that most reliably
-closes the App Store door.
+**Decided and shipped.** See [19](#19-shipping-it) for the whole of it: a self-contained
+`.app` signed with a self-signed certificate, distributed as a zip on a GitHub release, with
+models downloading on first use.
+
+What that leaves parked: the App Sandbox is still off, nothing is notarised, and there is no
+update mechanism — a new version means downloading a new zip. `project.yml` still carries
+`com.apple.security.cs.disable-library-validation`, which is needed only while an interpreter
+with unsigned C extensions is being launched, and which is the single entitlement that most
+reliably closes the App Store door.
 
 Deleting Python is what makes the App Store possible again. That is now closer than it was: the
 decode is already Swift.
@@ -1429,6 +1441,137 @@ lsof -nP -p $(pgrep -f "Sunno.app/Contents/MacOS/Sunno") | grep LISTEN
 | `docs/macos-mockup.html` | The approved interface |
 | `docs/HANDOVER.md` | This file |
 | `project.yml` | The Xcode project, as forty lines of reviewable YAML |
+| `scripts/setup-engine.sh` | The Python engine into a `.venv`, for development |
+| `scripts/package-app.sh` | The self-contained app and its zip, for distribution |
+| `scripts/publish-release.sh` | That zip onto a GitHub release, replacing in place |
+| `scripts/capture-screenshots.sh` | README images; refuses to run against a locked screen |
+
+---
+
+## 19. Shipping it
+
+For most of this port there was no way to *have* Sunno without building it. That is a reasonable
+ask of a contributor and an unreasonable one of the person the app is for, who is hard of hearing
+and wants captions at dinner, not a toolchain.
+
+### 19.1 What the packaged app contains
+
+`scripts/package-app.sh` produces `dist/Sunno.app` (227 MB) and a zip beside it (73 MB). The app
+needs nothing on the target machine: not this repository, not a `.venv`, not Homebrew, and not
+Xcode's Command Line Tools.
+
+```
+Sunno.app/Contents/
+├── MacOS/Sunno                     the SwiftUI app
+├── Resources/
+│   ├── AppIcon.icns
+│   └── engine/
+│       ├── python/                 a relocatable CPython 3.12, with the deps installed
+│       ├── server/                 the engine
+│       ├── ui/                     the browser client
+│       └── whisperkit-service/     the Swift decode service, prebuilt
+```
+
+The interpreter comes from [python-build-standalone][pbs], cached under `.cache/` so a rebuild
+does not re-download 60 MB. It has to be a relocatable build: a Homebrew or system Python has
+absolute paths compiled into it and will not run from inside a bundle on another machine.
+
+[pbs]: https://github.com/astral-sh/python-build-standalone
+
+`BackendHost.engineRoot()` looks in `Contents/Resources/engine` **first**, then walks up to find a
+checkout. A shipped build gets the engine that shipped with it, never whatever happens to be in a
+directory above it.
+
+### 19.2 What is deliberately not in it
+
+**The speech models.** They download on first use. Bundling `large-v3` would turn a 73 MB
+download into roughly 5 GB, for a model most users should not choose — and every user would pay
+that cost to get a model they may never load. The trade is that first use of a model needs a
+network connection, which is the one moment Sunno touches the network anyway.
+
+**faster-whisper and CTranslate2.** The packaged engine installs a lean dependency set. The
+CTranslate2 path still exists in `server/` and still works from a development checkout, but it is
+the processor-only engine that WhisperKit replaced, and shipping it would add over 100 MB to buy
+a slower decode. See [9](#9-the-engine-story).
+
+### 19.3 The signing discovery that cost an hour
+
+**Entitlements do not inherit into nested binaries.** The app is signed with
+`com.apple.security.cs.disable-library-validation`, and that is not enough. The *bundled Python*
+must be signed with that entitlement in its own right, or every native extension — numpy,
+onnxruntime, sherpa_onnx — fails to `dlopen` with a complaint about different Team IDs. The app's
+Python is signed by one identity and the wheels inside it are signed by their authors, or not at
+all, and library validation refuses the mix.
+
+The script signs 44 inner binaries, and gives `inner.entitlements` to the two that load foreign
+code: `python3` and `whisperkit-service`.
+
+Signing order matters and is not optional: inner binaries first, bundle last. Signing the bundle
+first and then touching anything inside it invalidates the outer signature, and the failure comes
+much later as a launch that dies without a useful message.
+
+### 19.4 Gatekeeper, and the step users cannot skip
+
+The build is signed with a **self-signed certificate**, not an Apple Developer one. So:
+
+```
+$ spctl -a -t exec -vv Sunno.app
+Sunno.app: rejected
+origin=Sunno Local Dev
+```
+
+That rejection is what a user meets on first launch, and there is no way around it without a
+$99/year Apple Developer Program membership, which was considered and declined. **macOS 15
+removed the Control-click → Open shortcut** that used to bypass this, so the only route is System
+Settings → Privacy & Security → **Open Anyway**. The README says so plainly rather than letting
+someone conclude the download is broken.
+
+**Self-signed is nevertheless better than ad-hoc here**, and for a non-obvious reason: macOS keys
+a permission grant to the signing identity. An ad-hoc signature changes its cdhash on every
+build, so users would lose their microphone and screen-recording grants *on every update*. A
+certificate keeps them. The same fact appears in [15](#15-landmines) for development builds; it
+applies with more force to shipped ones.
+
+The certificate is `Sunno Local Dev` in the login keychain. Its name leaks into `spctl` output,
+which is untidy for a public build — renaming it means creating a new certificate, and doing that
+resets every user's permission grants. Worth doing once, early, if it is going to be done at all.
+
+### 19.5 Releasing
+
+`scripts/publish-release.sh` attaches the zip to a GitHub release and **replaces the asset in
+place** on a rebuild, so a download link on a website never goes stale. Re-run it after every
+`package-app.sh`.
+
+The zip is not committed. Git keeps every version of everything forever, and an 80 MB binary that
+changes on every build would make this repository permanently larger each time anybody packages
+it. `dist/` and `.cache/` are both ignored.
+
+Current release: [`v0.1.0`](https://github.com/desigrit/sunno-macos/releases/tag/v0.1.0).
+
+### 19.6 Verifying a release properly
+
+Checking that `dist/Sunno.app` runs proves less than it appears to, because that machine has the
+repository, a venv and a toolchain on it. The real test is the user's path:
+
+```bash
+curl -L -o /tmp/t.zip https://github.com/desigrit/sunno-macos/releases/download/v0.1.0/Sunno-0.1.0-macOS-arm64.zip
+shasum -a 256 /tmp/t.zip dist/Sunno-0.1.0-macOS-arm64.zip     # must match
+cd /tmp && ditto -x -k t.zip . && codesign --verify --deep --strict Sunno.app
+pgrep -fl server.app          # must point inside Contents/Resources/engine
+```
+
+That last line is the one that matters. If the running interpreter's path is anywhere outside the
+bundle, the app is quietly borrowing something from the build machine and will fail on a machine
+that lacks it. It was checked for `v0.1.0` and the engine resolved to
+`Sunno.app/Contents/Resources/engine/python/bin/python3`, listening on `127.0.0.1` only.
+
+### 19.7 The Mac App Store, and why not
+
+Ruled out, and worth recording so it is not re-investigated. $99/year is the smaller obstacle.
+The larger one is that three things the app does are incompatible with the App Store sandbox:
+`disable-library-validation`, spawning a Python interpreter it carries, and writing an engine
+environment at runtime. Getting in would mean replacing the Python engine with native Swift
+entirely — which is a plausible long-term direction, but a rewrite, not a packaging change.
 
 ---
 
