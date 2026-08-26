@@ -200,7 +200,7 @@ There is one live branch in the other repository from this work:
 | Notarisation | None. First launch needs Privacy & Security → Open Anyway | [19.4](#194-gatekeeper-and-the-step-users-cannot-skip) |
 | Updates | No mechanism. A new version is a new download | [19.5](#195-releasing) |
 | Screen recording permission | Must be granted by hand; macOS never prompts | [15](#15-landmines) |
-| Speaker embedding model | Not present, so speaker labelling is off in this checkout | [13.4](#134-speaker-labelling-is-off-in-this-checkout) |
+| Speaker embedding model | Present. `scripts/fetch-speaker-model.sh` gets it | [13.4](#134-speaker-labelling-fixed) |
 
 ### Commit history of this work
 
@@ -1139,22 +1139,48 @@ tokenising on the Swift side. Left out rather than half-done, and marked in the 
 
 **Cost:** a little accuracy on sentences that continue a thought.
 
-### 13.4 Speaker labelling is off in this checkout
+### 13.4 Speaker labelling: fixed
 
-The engine reports:
+**Was:** the engine printed `Speaker labelling: off (speaker embedding model not found)` and
+every caption came through unattributed. `speaker.py` and the whole roster path were intact;
+there was simply no model to embed with, so a headline feature was silently absent — including
+in the first packaged build, which shipped without it.
 
-```
-Speaker labelling: off (speaker embedding model not found:
-  .../models/speaker-embedding-campplus-en.onnx)
-```
+**Now:** `scripts/fetch-speaker-model.sh` downloads WeSpeaker CAM++ (VoxCeleb, 512-dimensional,
+28 MB) from the `sherpa-onnx` release that publishes it, verifies its checksum, and drops it at
+`models/speaker-embedding-campplus-en.onnx` — the name `config.py` expects and the one the
+Windows package uses. `setup-engine.sh` calls it, and `package-app.sh` copies that one file into
+the bundle. The engine now prints `Speaker labelling: on`.
 
-The 28 MB CAM++ model is not in this repository. `speaker.py` and the whole roster path are intact
-and the protocol carries speakers; there is simply no model to embed with. The Windows package
-ships it.
+Not committed, deliberately, and for the same reason the Windows build keeps `models/` out of
+git: it is a working directory that also accumulates benchmark weights, and 28 MB of
+reproducible binary would be paid by every clone forever.
 
-**To fix:** vendor the model, or download it on first run the way the Whisper weights are.
-`sherpa-onnx` exposes the extractor and produces the same 512-dimensional vector the existing
-`speakers.json` profiles are built from, so saved speakers stay valid.
+**The upstream tag is spelt `speaker-recongition-models`.** That typo is the release name.
+Correcting it gives a 404.
+
+### 13.4a Speaker labelling cannot be tested with synthesised speech
+
+Worth knowing before anybody tries, because it looks like it ought to work and fails in a way
+that reads as a broken threshold rather than an impossible measurement.
+
+Eleven lines were synthesised with four different macOS `say` voices and embedded with the
+CAM++ model the app uses:
+
+| | pairs | mean cosine | extreme |
+|---|---|---|---|
+| Same voice | 10 | 0.586 | min 0.278 |
+| Different voices | 45 | 0.487 | max 0.862 |
+
+The distributions overlap almost completely: some same-voice pairs are *less* similar than the
+most similar different-voice pair. **No threshold separates them.** Every macOS voice comes out
+of one synthesiser, and a model trained to separate human speakers has nothing to work with.
+
+Consequences, both real:
+
+- Speaker labelling can only be exercised with recordings of actual people.
+- The documentation screenshots cannot be produced from synthesised audio, which is why
+  `scripts/demo-engine.py` exists. See [19.8](#198-the-screenshots).
 
 ### 13.5 Distribution
 
@@ -1572,6 +1598,50 @@ The larger one is that three things the app does are incompatible with the App S
 `disable-library-validation`, spawning a Python interpreter it carries, and writing an engine
 environment at runtime. Getting in would mean replacing the Python engine with native Swift
 entirely — which is a plausible long-term direction, but a rewrite, not a packaging change.
+
+### 19.8 The screenshots
+
+`docs/screenshots/` holds four images, matching the four the Windows README carries, showing the
+same dinner conversation so the two platforms are comparable at a glance.
+
+They are produced by attaching the app to a stand-in engine:
+
+```bash
+./scripts/demo-engine.py &                    # serves a scripted conversation
+SUNNO_ATTACH=1 open -a dist/Sunno.app         # so the app does not start a real one
+```
+
+`SUNNO_ATTACH=1` is a small hatch in `BackendHost.start()`: when set, it marks the engine
+running and returns without spawning one. It is also the pleasant way to develop against the
+engine, since running it by hand puts its latency figures and speaker ids in a terminal instead
+of into the pipe that `BackendHost` reads and discards. Deliberately an environment variable and
+not a setting — nothing in the interface should be able to point the app at an engine the user
+did not start.
+
+**`demo-engine.py` lives in `scripts/`, which `package-app.sh` does not copy.** That is the
+point: it fabricates captions, and an app people rely on to know what was said must not carry
+code that can invent them, not even unreachable. Keeping it outside `server/` makes shipping it
+impossible rather than merely unlikely.
+
+It serves the **real** model catalogue by importing `server.models`, so the sizes and installed
+ticks in the picker screenshot are true of the machine that took it. Only the transcript and the
+roster are scripted.
+
+Three things learned taking them, each of which cost a wasted attempt:
+
+- **A locked or sleeping Mac renders no windows.** `screencapture` does not report this. It
+  returns the desktop picture, and the first three attempts produced a very nice photograph of
+  some redwoods.
+- **Screen recording permission is required by the process that captures**, and without it macOS
+  again does not error — it silently strips every window out of the image and hands back bare
+  desktop. Same failure, entirely different cause.
+- **`CGWindowListCreateImage` was removed in macOS 15**, and `SCScreenshotManager` needs its own
+  TCC grant. What works is capturing the whole screen with `/usr/sbin/screencapture`, which is
+  already entitled, and cropping to the window bounds afterwards.
+
+Whisper's tokenizer emits words with the space attached — `" Marco"`, not `"Marco"` — and the
+transcript view concatenates tokens verbatim, which is the only way to reproduce spacing around
+punctuation. A stand-in that emits bare words produces `Marco,behonestwithme`.
 
 ---
 

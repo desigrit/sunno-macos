@@ -121,6 +121,20 @@ final class BackendHost: ObservableObject {
                forceCPU: Bool) {
         guard process == nil else { return }
 
+        // Attach to an engine somebody else started, rather than starting one.
+        //
+        // For development, where running the engine in a terminal means its latency figures
+        // and speaker ids are visible as they happen instead of being read and discarded
+        // below, and it can be restarted without restarting the app. `scripts/demo-engine.py`
+        // uses the same door to drive the interface for documentation screenshots.
+        //
+        // Deliberately an environment variable and not a setting: nothing in the interface
+        // should be able to point the app at an engine the user did not start.
+        if ProcessInfo.processInfo.environment["SUNNO_ATTACH"] == "1" {
+            status = .running
+            return
+        }
+
         // Before anything binds a port, clear away an engine a previous run left behind.
         // Without this the new child dies on the port conflict and the app quietly attaches
         // to the stale one, which presents as a working app showing state that stopped

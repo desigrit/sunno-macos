@@ -86,15 +86,15 @@ CATALOG: list[dict] = [
     {
         "id": "base",
         "name": "Whisper base",
-        "detail": "Fast enough for a laptop with no graphics card. Makes more mistakes.",
+        "detail": "Fast enough for any Mac, on the Neural Engine. Makes more mistakes.",
         "approx_mb": 145,
         "languages": "multilingual",
     },
     {
         "id": "stream-en",
         "name": "Zipformer",
-        "detail": "Built for PCs with no graphics card. English only, lower case with no "
-                  "punctuation.",
+        "detail": "Streams as you speak, with almost no delay. English only, lower case "
+                  "with no punctuation.",
         "approx_mb": 69,
         "languages": "English",
     },
@@ -108,8 +108,8 @@ CATALOG: list[dict] = [
     {
         "id": "stream-en-kroko",
         "name": "Kroko",
-        "detail": "Built for PCs with no graphics card. English only, with capitals and "
-                  "punctuation.",
+        "detail": "Streams as you speak, with almost no delay. English only, with capitals "
+                  "and punctuation.",
         "approx_mb": 68,
         "languages": "English",
     },

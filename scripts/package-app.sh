@@ -98,6 +98,15 @@ cp -R server "$ENGINE/server"
 cp -R ui "$ENGINE/ui"
 find "$ENGINE/server" -name "__pycache__" -type d -exec rm -rf {} + 2>/dev/null || true
 
+# The speaker embedding model, fetched if this is a clean checkout. One named file rather than
+# a directory copy, because `models/` is a working directory that also accumulates benchmark
+# weights, and a recursive copy would silently add a couple of hundred megabytes to a download
+# whose whole argument is that it is small. Same reasoning, same single-file copy, as the
+# Windows build's stage-backend.ps1.
+./scripts/fetch-speaker-model.sh
+mkdir -p "$ENGINE/models"
+cp models/speaker-embedding-campplus-en.onnx "$ENGINE/models/"
+
 # ---------------------------------------------------------------- metadata
 
 echo "==> Info.plist"

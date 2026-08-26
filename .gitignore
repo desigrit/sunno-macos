@@ -30,3 +30,7 @@ whisperkit-service/.build/
 # Cached relocatable Python for packaging
 .cache/
 dist/
+
+# Working directory for model weights. Reproducible from scripts/fetch-speaker-model.sh, and
+# the same arrangement the Windows build uses, where it also holds benchmark models.
+models/

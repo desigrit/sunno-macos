@@ -2,6 +2,8 @@
 
 **Live captions for the conversation in front of you, running entirely on your own Mac.**
 
+![Sunno captioning a four person conversation, with each speaker labelled](docs/screenshots/main.png)
+
 ---
 
 ## Why this exists
@@ -89,6 +91,12 @@ rooms and comfortably ahead of the conversation. The first launch after a downlo
 "Loading the model" for a minute or so while Core ML compiles it for your particular Mac. That
 happens once per model and never again.
 
+![The model picker, with delay estimates and download sizes](docs/screenshots/models.png)
+
+Compact mode keeps the captions on top of whatever you are doing, and nothing else:
+
+![Compact mode, showing only the last few lines](docs/screenshots/compact.png)
+
 ## Building
 
 ```bash
@@ -112,6 +120,24 @@ download on first use, which is the difference between an 80 MB download and a 5
 
 `publish-release.sh` replaces the asset on an existing release rather than making a new one, so
 the download link never changes.
+
+The README's screenshots are produced by attaching the app to a stand-in engine:
+
+```bash
+./scripts/demo-engine.py &                    # serves a scripted conversation
+SUNNO_ATTACH=1 open -a dist/Sunno.app         # so the app does not start a real one
+```
+
+`SUNNO_ATTACH=1` also works with the real engine run by hand, which is the easier way to watch
+its latency figures and speaker ids while using the app.
+
+**The demo engine exists because speaker labelling cannot be demonstrated with synthesised
+speech.** Measured with the CAM++ embeddings the app actually uses, macOS `say` voices score
+0.586 mean cosine similarity to themselves and 0.487 to each other — distributions that overlap
+almost completely, because they all come out of one synthesiser and the model was trained to
+separate humans. No threshold works, and there is no arrangement of `say` voices that produces
+a four-speaker screenshot. It lives in `scripts/`, which `package-app.sh` does not copy, so
+code that can invent captions cannot reach an app that people trust to tell them what was said.
 
 `project.yml` is the source of truth and the `.xcodeproj` is generated rather than committed: a
 pbxproj conflicts on every branch and nobody reviews it, where forty lines of YAML can be read in
@@ -221,8 +247,7 @@ window alive and reconnecting instead of taking the app down mid-conversation.
 | `server/` | Python engine: capture, VAD, recognition, speaker labelling |
 | `ui/` | Browser client, for the phone or handheld route |
 | `whisperkit-service/` | Swift decode service, so Whisper reaches the Neural Engine |
-| `scripts/` | Engine setup, packaging, releasing, screenshots |
-| `docs/HANDOVER.md` | The full state of the work: what is built, measured, parked and next |
+| `scripts/` | Engine setup, packaging, releasing, screenshots || `docs/HANDOVER.md` | The full state of the work: what is built, measured, parked and next |
 | `docs/MACOS-PORT.md` | The decisions, the evidence, and what is still unverified |
 | `docs/macos-mockup.html` | The approved interface, screen by screen |
 
