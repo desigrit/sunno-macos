@@ -18,7 +18,6 @@ this app exists.
 Sunno means "listen" in Hindi and Urdu.
 
 This is the Mac version of [Sunno](https://github.com/desigrit/sunno), which started on Windows.
-Same promises, same shape, a different machine underneath.
 
 ## What it does
 
