@@ -102,12 +102,34 @@ final class WindowChrome: ObservableObject {
         // Lower the minimum first, then resize. See the type comment.
         window.contentMinSize = compact ? Self.compactMinimum : Self.expandedMinimum
 
-        let saved = settings.frame(compact: compact)
-        let target = saved ?? defaultFrame(compact: compact, on: window.screen)
+        let fallback = defaultFrame(compact: compact, on: window.screen)
+        let target = settings.frame(compact: compact)
+            .flatMap { Self.onScreen($0) } ?? fallback
         window.setFrame(target, display: true, animate: !settings.reduceMotion)
 
         // And raise it again once the window is actually the new size.
         window.contentMinSize = compact ? Self.compactMinimum : Self.expandedMinimum
+    }
+
+    /// A saved frame, but only if it still lands somewhere the user can reach.
+    ///
+    /// Displays come and go. A window last used on an external monitor is restored to
+    /// coordinates that no longer exist once the laptop is undocked, and the window opens
+    /// somewhere nobody can see or drag it back from. For this app that is unusually bad: the
+    /// person who cannot find the window is the person who cannot hear the room.
+    ///
+    /// A generous overlap is required rather than a single visible pixel, so a window hanging
+    /// a hair onto a screen is not counted as reachable. The title bar is what has to be
+    /// grabbable, which is why the test is on area rather than on the origin alone.
+    private static func onScreen(_ frame: NSRect) -> NSRect? {
+        let overlap = NSScreen.screens.reduce(0.0) { best, screen in
+            let shared = screen.visibleFrame.intersection(frame)
+            guard !shared.isNull else { return best }
+            return max(best, shared.width * shared.height)
+        }
+        let area = frame.width * frame.height
+        guard area > 0, overlap / area >= 0.4 else { return nil }
+        return frame
     }
 
     private func defaultFrame(compact: Bool, on screen: NSScreen?) -> NSRect {

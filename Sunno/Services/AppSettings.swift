@@ -78,6 +78,16 @@ final class AppSettings: ObservableObject {
                               forKey: Keys.hasSeenScreenCaptureExplanation) }
     }
 
+    /// Where recordings are written. Nil means the engine's own default,
+    /// `~/Sunno/Recordings`.
+    ///
+    /// Nil rather than a resolved path on purpose: writing the default in here would bake one
+    /// machine's home directory into a preference, and a folder that is only created when a
+    /// recording is actually saved must not be pre-empted by a default that looks chosen.
+    @Published var recordingsPath: String? {
+        didSet { defaults.set(recordingsPath, forKey: Keys.recordingsPath) }
+    }
+
     /// Mirrors the system setting so views can branch without each one asking AppKit.
     /// Refreshed by `WindowChrome`, which is already observing the notification.
     @Published var reduceMotion: Bool = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
@@ -89,7 +99,11 @@ final class AppSettings: ObservableObject {
         forceCPU = defaults.bool(forKey: Keys.forceCPU)
         let size = defaults.double(forKey: Keys.captionFontSize)
         captionFontSize = size > 0 ? CGFloat(size) : 20
-        alwaysOnTop = defaults.object(forKey: Keys.alwaysOnTop) as? Bool ?? false
+        // On by default, matching the Windows build. A captioning window that other windows
+        // cover is a captioning window nobody can read: the whole point is to follow a
+        // conversation while doing something else, and every alternative to this default
+        // asks the user to discover a setting before the app does its job.
+        alwaysOnTop = defaults.object(forKey: Keys.alwaysOnTop) as? Bool ?? true
         isCompact = defaults.bool(forKey: Keys.isCompact)
         selectedModel = defaults.string(forKey: Keys.selectedModel)
         let savedIndex = defaults.object(forKey: Keys.deviceIndex) as? Int ?? -1
@@ -99,6 +113,7 @@ final class AppSettings: ObservableObject {
         hasCompletedSetup = defaults.bool(forKey: Keys.hasCompletedSetup)
         hasSeenScreenCaptureExplanation =
             defaults.bool(forKey: Keys.hasSeenScreenCaptureExplanation)
+        recordingsPath = defaults.string(forKey: Keys.recordingsPath)
     }
 
     func stepFontSize(by delta: Int) {
@@ -135,6 +150,7 @@ final class AppSettings: ObservableObject {
         static let deviceIsLoopback = "deviceIsLoopback"
         static let hasCompletedSetup = "hasCompletedSetup"
         static let hasSeenScreenCaptureExplanation = "hasSeenScreenCaptureExplanation"
+        static let recordingsPath = "recordingsPath"
         static let compactFrame = "compactFrame"
         static let expandedFrame = "expandedFrame"
     }

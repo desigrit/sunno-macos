@@ -7,11 +7,18 @@ struct MainView: View {
     @ObservedObject var devices: DeviceCatalog
     @ObservedObject var chrome: WindowChrome
     @ObservedObject var backend: BackendHost
+    @ObservedObject var recording: RecordingController
+    @ObservedObject var models: ModelSwitch
 
     let onCommand: (BackendCommand) -> Void
     let onSelectDevice: (DeviceCatalog.Device) -> Void
+    let onToggleRecording: () -> Void
+    let onSelectModel: (String) -> Void
+    let onRefreshDevices: () -> Void
 
     @State private var renaming: SpeakerRow?
+    /// A named speaker waiting on confirmation before being forgotten.
+    @State private var deleting: SpeakerRow?
 
     /// The engine's own failures, shown in the same banner as the ones it reports over the
     /// socket. `BackendHost` writes careful sentences for a missing submodule, an absent venv
@@ -25,7 +32,7 @@ struct MainView: View {
     private var activeProblem: TranscriptStore.Problem? {
         if let problem = store.problem { return problem }
         if case .failed(let message) = backend.status {
-            return TranscriptStore.Problem(message: message, code: nil)
+            return TranscriptStore.Problem(message: message, code: nil, severity: .error)
         }
         return nil
     }
@@ -57,7 +64,9 @@ struct MainView: View {
                     // Above the picker too. A dead engine is exactly the case where the
                     // catalogue arrives empty, and an empty picker explains nothing.
                     if let problem = activeProblem {
-                        ProblemBanner(problem: problem)
+                        ProblemBanner(problem: problem,
+                                  detail: backend.failureDetail,
+                                  onDismiss: store.dismissProblem)
                         Divider()
                     }
                     FirstRunView(store: store, settings: settings) { model in
@@ -75,13 +84,33 @@ struct MainView: View {
         })
         .onAppear { chrome.setCompactBlocked(blocksCompact) }
         .onChange(of: blocksCompact) { chrome.setCompactBlocked($0) }
+        // Only named speakers ask. An auto-discovered "Speaker 3" carries no work the user
+        // did and reappears the moment that person speaks again, so a dialog for it is a
+        // question with one sensible answer. A named one is a pinned voice profile, and
+        // forgetting it cannot be undone.
+        .alert("Forget \(deleting?.label ?? "")?", isPresented: Binding(
+            get: { deleting != nil },
+            set: { if !$0 { deleting = nil } }
+        ), presenting: deleting) { speaker in
+            Button("Forget", role: .destructive) {
+                onCommand(.deleteSpeaker(id: speaker.id))
+                deleting = nil
+            }
+            // Cancel is the default: the safe answer should be the one a stray return key
+            // reaches.
+            Button("Cancel", role: .cancel) { deleting = nil }
+        } message: { _ in
+            Text("Sunno will stop recognising this voice, and lines already in the transcript "
+                 + "will no longer show their name. This cannot be undone.")
+        }
         .sheet(item: $renaming) { speaker in
             SpeakerEditor(speaker: speaker, others: store.speakers) { action in
                 switch action {
-                case .rename(let name):
-                    onCommand(.renameSpeaker(id: speaker.id, name: name))
-                case .setSelf(let value):
-                    onCommand(.setSelf(id: speaker.id, value: value))
+                case .save(let name, let isSelf):
+                    // Both, when both changed. The engine applies each and answers with one
+                    // roster, so the order between them does not matter.
+                    if let isSelf { onCommand(.setSelf(id: speaker.id, value: isSelf)) }
+                    if let name { onCommand(.renameSpeaker(id: speaker.id, name: name)) }
                 case .merge(let target):
                     onCommand(.mergeSpeakers(source: speaker.id, target: target))
                 case .cancel:
@@ -89,6 +118,15 @@ struct MainView: View {
                 }
                 renaming = nil
             }
+        }
+    }
+
+    /// Named speakers are confirmed; unnamed ones go straight away.
+    private func confirmDelete(_ speaker: SpeakerRow) {
+        if speaker.named {
+            deleting = speaker
+        } else {
+            onCommand(.deleteSpeaker(id: speaker.id))
         }
     }
 
@@ -100,20 +138,20 @@ struct MainView: View {
                 store: store,
                 settings: settings,
                 onRename: { renaming = $0 },
-                onDelete: { onCommand(.deleteSpeaker(id: $0.id)) },
-                onSelectModel: { model in
-                    // Persisted here as well as sent. The first-run picker writes the setting
-                    // and this one did not, so a model chosen from the sidebar worked for the
-                    // session and was forgotten: the next launch started the old one back up.
-                    settings.selectedModel = model
-                    onCommand(.downloadModel(model))
-                },
+                onDelete: confirmDelete,
+                // Deliberately does not write the preference. `ModelSwitch` commits it once
+                // the engine reports the model actually running, so a model that downloads
+                // and then fails to load is not the one waiting at the next launch.
+                onSelectModel: onSelectModel,
+                pendingModel: models.pending,
                 onRefreshModels: { onCommand(.listModels) }
             )
 
             VStack(spacing: 0) {
                 if let problem = activeProblem {
-                    ProblemBanner(problem: problem)
+                    ProblemBanner(problem: problem,
+                                  detail: backend.failureDetail,
+                                  onDismiss: store.dismissProblem)
                     Divider()
                 }
                 TranscriptView(store: store, settings: settings, isCompact: false)
@@ -126,7 +164,7 @@ struct MainView: View {
                     devices: devices,
                     onToggle: { onCommand(.toggle) },
                     onSelectDevice: onSelectDevice,
-                    onRefreshDevices: { Task { await devices.refresh(fresh: true) } }
+                    onRefreshDevices: onRefreshDevices
                 )
             }
             .frame(minWidth: 440)
@@ -135,6 +173,14 @@ struct MainView: View {
         // in the menu bar because it is the one command reached for repeatedly. The Windows
         // build puts it in the same relative place for the same reason.
         .toolbar {
+            // Left of compact mode, and deliberately not in the transport bar at the bottom:
+            // that bar is hidden in compact mode, so a recording could not be stopped from
+            // there without first growing the window back.
+            ToolbarItem(placement: .primaryAction) {
+                RecordButton(recording: recording,
+                             settings: settings,
+                             onToggle: onToggleRecording)
+            }
             ToolbarItem(placement: .primaryAction) {
                 Button {
                     chrome.setCompact(true)
@@ -223,11 +269,16 @@ struct MainView: View {
 /// be used to read the thing it is explaining.
 private struct ProblemBanner: View {
     let problem: TranscriptStore.Problem
+    /// The engine's own reason, when there is one. Offered as "Copy details" rather than
+    /// shown, because it is for whoever receives a bug report and not for the person trying
+    /// to get captions back.
+    let detail: String?
+    let onDismiss: () -> Void
 
     var body: some View {
         HStack(spacing: 10) {
-            Image(systemName: "exclamationmark.triangle.fill")
-                .foregroundStyle(.orange)
+            Image(systemName: icon)
+                .foregroundStyle(tint)
             Text(problem.message)
                 .font(.system(size: 12))
                 .fixedSize(horizontal: false, vertical: true)
@@ -236,11 +287,47 @@ private struct ProblemBanner: View {
                 Link("Open Settings", destination: url)
                     .font(.system(size: 12))
             }
+            if let detail {
+                Button("Copy details") {
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(detail, forType: .string)
+                }
+                .font(.system(size: 12))
+                .buttonStyle(.link)
+            }
+            Button {
+                onDismiss()
+            } label: {
+                Image(systemName: "xmark")
+                    .font(.system(size: 10, weight: .semibold))
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(.secondary)
+            .help("Dismiss")
+            .accessibilityLabel("Dismiss this message")
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 9)
-        .background(Color.orange.opacity(0.10))
+        .background(tint.opacity(0.10))
         .accessibilityElement(children: .combine)
+    }
+
+    /// Colour is never the only signal — the symbol changes with it. This is the last app
+    /// that should ask somebody to tell orange from blue to know whether captions stopped.
+    private var icon: String {
+        switch problem.severity {
+        case .info:    return "info.circle.fill"
+        case .warning: return "exclamationmark.triangle.fill"
+        case .error:   return "xmark.octagon.fill"
+        }
+    }
+
+    private var tint: Color {
+        switch problem.severity {
+        case .info:    return .accentColor
+        case .warning: return .orange
+        case .error:   return .red
+        }
     }
 
     /// Only offered for the codes where a settings pane genuinely is the fix. Sending someone

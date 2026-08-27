@@ -245,8 +245,13 @@ class WhisperKitEngine:
         if not reply.get("ok"):
             raise WhisperKitServiceError(reply.get("error", "decode failed"))
 
+        # The service already sends start and end for every word; they were being dropped
+        # here. They are what lets a saved recording line up with its audio, so a reader can
+        # find the moment a sentence was said rather than scrubbing for it.
         words = [
-            Word(text=w["word"], probability=float(w["probability"]))
+            Word(text=w["word"], probability=float(w["probability"]),
+                 start_s=None if w.get("start") is None else float(w["start"]),
+                 end_s=None if w.get("end") is None else float(w["end"]))
             for w in (reply.get("words") or [])
         ]
         return Transcript(

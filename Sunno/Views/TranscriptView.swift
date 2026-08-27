@@ -14,7 +14,8 @@ struct TranscriptView: View {
                         CaptionRow(line: line,
                                    speaker: store.speaker(line.speakerId),
                                    settings: settings,
-                                   isCompact: isCompact)
+                                   isCompact: isCompact,
+                                   onCopyAll: copyAll)
                             .id(line.id)
                     }
                 }
@@ -35,6 +36,37 @@ struct TranscriptView: View {
             }
         }
     }
+
+    /// The whole conversation, as somebody would want to paste it into a note.
+    ///
+    /// Final lines only. A provisional is a half-decoded guess that is about to be replaced,
+    /// and pasting one into a record of what was said would be putting words in somebody's
+    /// mouth that they did not finish saying.
+    private func copyAll() {
+        let body = store.lines
+            .filter { $0.isFinal }
+            .map { TranscriptView.plainText(line: $0,
+                                            speaker: store.speaker($0.speakerId),
+                                            includeMeta: true) }
+            .joined(separator: "\n")
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(body, forType: .string)
+    }
+
+    /// `[19:41] Sarah: text`, matching the Windows build.
+    ///
+    /// The speaker and the time are what turn a quote into a record of who said what, which
+    /// is the whole reason somebody copies a transcript rather than retyping the sentence
+    /// they remember.
+    static func plainText(line: CaptionLine, speaker: SpeakerRow?,
+                          includeMeta: Bool) -> String {
+        guard includeMeta else { return line.text }
+        var prefix = ""
+        let stamp = line.timeLabel
+        if !stamp.isEmpty { prefix += "[\(stamp)] " }
+        if let speaker { prefix += "\(speaker.displayLabel): " }
+        return prefix + line.text
+    }
 }
 
 /// One utterance: an optional meta line, then the words.
@@ -43,6 +75,7 @@ private struct CaptionRow: View {
     let speaker: SpeakerRow?
     @ObservedObject var settings: AppSettings
     let isCompact: Bool
+    let onCopyAll: () -> Void
 
     /// Compact drops the speaker, time and clarity entirely. In a window whose only content
     /// is captions, three pieces of metadata can be taller than the sentence they describe.
@@ -102,10 +135,16 @@ private struct CaptionRow: View {
         .accessibilityLabel(accessibilityText)
         .contextMenu {
             Button("Copy") {
-                NSPasteboard.general.clearContents()
-                NSPasteboard.general.setString(line.text, forType: .string)
+                copy(TranscriptView.plainText(line: line, speaker: speaker,
+                                              includeMeta: !isCompact))
             }
+            Button("Copy Whole Transcript") { onCopyAll() }
         }
+    }
+
+    private func copy(_ text: String) {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(text, forType: .string)
     }
 
     private var accessibilityText: String {

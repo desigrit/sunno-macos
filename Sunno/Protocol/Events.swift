@@ -25,6 +25,7 @@ struct BackendEvent: Decodable {
         case roster
         case speakerMerged = "speaker_merged"
         case speakerDeleted = "speaker_deleted"
+        case recording
         case modelRequired = "model_required"
         case modelCatalog = "model_catalog"
         case downloadStarted = "download_started"
@@ -69,6 +70,18 @@ struct BackendEvent: Decodable {
     // roster
     let speakers: [Speaker]?
 
+    // recording
+    /// Length of audio written, not wall-clock time since the button was pressed. The two
+    /// differ whenever capture stops and starts inside one recording — a pause, a swapped
+    /// microphone — and the audio length is the one that matches the file that comes out.
+    let elapsedS: Double?
+    /// The folder being written to. Handed straight back as `resume` when the engine is
+    /// restarted for a new microphone or model, so the recording continues into the same
+    /// file instead of the restart quietly ending it and beginning another.
+    let folder: String?
+    let name: String?
+    let lines: Int?
+
     // speaker_merged / speaker_deleted
     /// `from` is a Swift keyword, so the wire name is aliased in CodingKeys below.
     let mergedFrom: Int?
@@ -104,6 +117,8 @@ struct BackendEvent: Decodable {
         case words, rms, db
         case speechProb = "speech_prob"
         case speaking, speakers
+        case elapsedS = "elapsed_s"
+        case folder, name, lines
         case mergedFrom = "from"
         case mergedInto = "into"
         case label, requested, current, catalog, model, downloaded, total, percent
@@ -164,6 +179,8 @@ enum BackendCommand {
     case mergeSpeakers(source: Int, target: Int)
     case deleteSpeaker(id: Int)
     case resetSpeakers
+    case startRecording(path: String?)
+    case stopRecording
 
     var payload: [String: Any] {
         switch self {
@@ -187,6 +204,15 @@ enum BackendCommand {
             return ["cmd": "delete_speaker", "id": id]
         case .resetSpeakers:
             return ["cmd": "reset_speakers"]
+        case .startRecording(let path):
+            // The destination rides on the command that starts the recording rather than
+            // being configured once, so changing the folder mid-recording takes effect on
+            // the next one instead of moving an open file.
+            var out: [String: Any] = ["cmd": "start_recording"]
+            if let path, !path.isEmpty { out["path"] = path }
+            return out
+        case .stopRecording:
+            return ["cmd": "stop_recording"]
         }
     }
 

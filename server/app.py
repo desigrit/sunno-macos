@@ -207,6 +207,11 @@ def parse_args() -> tuple[Settings, argparse.Namespace]:
     parser.add_argument("--compute-device", default="auto", choices=("auto", "cuda", "cpu"),
                         help="where to run the model; 'auto' uses the GPU when one is usable")
     parser.add_argument("--language", default="en", help="forced language, or 'auto'")
+    parser.add_argument("--recordings-path", default=None,
+                        help="where recordings are written (default: ~/Sunno/Recordings)")
+    parser.add_argument("--resume-recording", default=None,
+                        help="continue writing into this recording folder rather than "
+                             "finalising it; used when restarting mid-recording")
     parser.add_argument("--host", default="127.0.0.1", help="bind address (0.0.0.0 for LAN)")
     parser.add_argument("--http-port", type=int, default=8765)
     parser.add_argument("--ws-port", type=int, default=8766)
@@ -260,6 +265,7 @@ def parse_args() -> tuple[Settings, argparse.Namespace]:
         ws_port=args.ws_port,
         input_device=device,
         loopback_device=args.loopback_device,
+        recordings_path=args.recordings_path,
         end_silence_ms=args.end_silence_ms,
         partial_interval_ms=args.partial_interval_ms,
         vocabulary=tuple(v.strip() for v in args.vocabulary.split(",") if v.strip()),
@@ -296,11 +302,100 @@ async def run(settings: Settings, args: argparse.Namespace) -> None:
 
     def emit(event: dict) -> None:
         """Thread-safe bridge from pipeline threads into the asyncio loop."""
+        # Finished lines go to the recording as they happen, from whichever thread produced
+        # them, so a kill loses at most the sentence being spoken.
+        if event.get("type") == "final" and recorder["active"] is not None:
+            try:
+                recorder["active"].add_line(event)
+            except Exception:
+                pass
         loop.call_soon_threadsafe(events.put_nowait, event)
+
+    # One recording at a time, held in a dict so the closures below and the audio tap all see
+    # the same object without a nonlocal chain through several nested functions.
+    recorder: dict = {"active": None}
+
+    def recordings_root() -> Path:
+        from . import recorder as rec_mod
+
+        chosen = getattr(settings, "recordings_path", None)
+        return Path(chosen) if chosen else rec_mod.default_root()
+
+    def recording_frame() -> dict:
+        active = recorder["active"]
+        return {
+            "type": "recording",
+            "state": "recording" if active is not None else "idle",
+            "elapsed_s": round(active.elapsed_s, 1) if active is not None else 0.0,
+            # Sent so the app can hand it straight back as `resume` when the backend is
+            # restarted for a new microphone or model. Without it a restart mid-recording
+            # would begin a second file rather than continuing the first.
+            "folder": str(active.folder) if active is not None else None,
+        }
+
+    def start_recording(path: str | None = None, resume: str | None = None) -> None:
+        if recorder["active"] is not None:
+            return
+        from . import recorder as rec_mod
+
+        try:
+            root = Path(path) if path else recordings_root()
+            recorder["active"] = rec_mod.Recorder(root, resume=resume)
+            verb = "Resuming" if resume else "Recording to"
+            print(f"{verb} {recorder['active'].folder}", flush=True)
+            emit(recording_frame())
+        except Exception as exc:
+            # A destination that cannot be written is the likely failure here, and it must
+            # not touch captions: report it and carry on transcribing.
+            print(f"[error] could not start recording: {exc}", flush=True)
+            emit({"type": "recording", "state": "failed", "message": str(exc)})
+
+    def stop_recording() -> None:
+        """Finish the recording, if there is one.
+
+        Always emits a terminal frame, even with nothing to stop. Changing microphone
+        restarts the backend, and if the app still believed it was recording while this
+        process had no recorder, an early return left the pill on screen with nothing behind
+        it: pressing it did nothing at all, for the rest of the session, with no way back.
+        """
+        active = recorder["active"]
+        if active is None:
+            emit({"type": "recording", "state": "idle", "elapsed_s": 0.0})
+            return
+        recorder["active"] = None
+        emit({"type": "recording", "state": "saving"})
+        try:
+            from . import recorder as rec_mod
+
+            saved = active.stop()
+            if saved.duration_s < 1.0 and saved.lines == 0:
+                # Pressed by accident. A folder holding a second of silence is clutter, and
+                # the user did not ask for a file, they asked to start and then not to.
+                rec_mod.discard(saved.folder)
+                print("Recording discarded (nothing captured)", flush=True)
+                emit({"type": "recording", "state": "idle", "elapsed_s": 0.0})
+                return
+            print(f"Saved {saved.name} ({saved.duration_s:.0f}s, {saved.lines} lines)",
+                  flush=True)
+            emit({
+                "type": "recording",
+                "state": "saved",
+                "name": saved.name,
+                "folder": str(saved.folder),
+                "duration_s": saved.duration_s,
+                "lines": saved.lines,
+            })
+        except Exception as exc:
+            print(f"[error] could not save recording: {exc}", flush=True)
+            emit({"type": "recording", "state": "failed", "message": str(exc)})
 
     async def handler(ws) -> None:  # noqa: ANN001
         clients.add(ws)
         await ws.send(json.dumps(latest_status))
+        # A client that reconnects mid-recording must not show an idle button over a running
+        # recording. Sent after the status frame so it cannot be overwritten by the replay.
+        if recorder["active"] is not None:
+            await ws.send(json.dumps(recording_frame()))
         if speaker is not None:
             await ws.send(json.dumps({"type": "roster", "speakers": speaker.roster()}))
         try:
@@ -316,6 +411,10 @@ async def run(settings: Settings, args: argparse.Namespace) -> None:
                     controller.pause()
                 elif cmd == "toggle":
                     controller.toggle()
+                elif cmd == "start_recording":
+                    start_recording(msg.get("path"), msg.get("resume"))
+                elif cmd == "stop_recording":
+                    stop_recording()
                 elif cmd == "download_model":
                     requested = str(msg.get("model") or settings.model_size)
                     loop.create_task(ensure_model(requested))
@@ -491,6 +590,27 @@ async def run(settings: Settings, args: argparse.Namespace) -> None:
     async with serve(handler, settings.host, settings.ws_port):
         asyncio.create_task(broadcaster())
 
+        # Anything the last run did not finish. A folder still holding raw audio means the
+        # process ended mid-recording, so the meeting is on disk but not yet a file; this
+        # turns it into one before the user goes looking for it.
+        #
+        # --resume-recording is skipped, because that folder is not an orphan: the app is
+        # about to ask us to carry on writing to it after a restart for a new microphone or
+        # model. Finalising it here would cut the recording in half.
+        try:
+            from . import recorder as rec_mod
+
+            for found in rec_mod.recover(recordings_root(), skip=args.resume_recording):
+                print(f"Recovered {found.name} from a previous session "
+                      f"({found.duration_s:.0f}s)", flush=True)
+        except Exception as exc:
+            print(f"[error] could not recover past recordings: {exc}", flush=True)
+
+        # Pick the recording back up before any client connects, so the first frame a
+        # reconnecting app receives already says "still recording" rather than "idle".
+        if args.resume_recording:
+            start_recording(None, args.resume_recording)
+
         # Decide up front whether we can load, or must ask the user to pick and download.
         from . import models as model_catalog
 
@@ -549,6 +669,12 @@ async def run(settings: Settings, args: argparse.Namespace) -> None:
             settings, engine, emit,
             should_run=lambda: controller.is_running,
             speaker=speaker,
+            # Every frame, including silence, and only while a recording is running. The
+            # lookup is per frame, which is what lets record and stop take effect without
+            # rebuilding the pipeline.
+            on_audio=lambda frame: (
+                recorder["active"].add_audio(frame) if recorder["active"] is not None else None
+            ),
         )
 
         def make_source():
@@ -636,6 +762,18 @@ async def run(settings: Settings, args: argparse.Namespace) -> None:
                         pipeline.drain()  # let in-flight transcriptions finish
                         break  # file exhausted
             finally:
+                # Let go of the files without finalising. This process is ending, but the
+                # recording may not be: changing microphone or model restarts the backend,
+                # and the next process reopens the same folder and carries on. A recording
+                # ends when the user stops it or closes Sunno, and closing Sunno finalises it
+                # on the next launch through recover().
+                active = recorder["active"]
+                if active is not None:
+                    try:
+                        active.detach()
+                        print(f"Released {active.folder} for the next process", flush=True)
+                    except Exception:
+                        pass
                 pipeline.close()
 
         print("Press Ctrl+C to stop.\n")

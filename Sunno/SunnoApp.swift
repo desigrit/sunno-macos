@@ -11,6 +11,8 @@ struct SunnoApp: App {
     @StateObject private var chrome = WindowChrome()
     @StateObject private var backend = BackendHost()
     @StateObject private var systemAudio = SystemAudioCapture()
+    @StateObject private var recording = RecordingController()
+    @StateObject private var models = ModelSwitch()
 
     var body: some Scene {
         WindowGroup {
@@ -20,8 +22,13 @@ struct SunnoApp: App {
                 devices: devices,
                 chrome: chrome,
                 backend: backend,
+                recording: recording,
+                models: models,
                 onCommand: { client.send($0) },
-                onSelectDevice: select
+                onSelectDevice: select,
+                onToggleRecording: toggleRecording,
+                onSelectModel: selectModel,
+                onRefreshDevices: refreshDevices
             )
             .frame(minWidth: 360, minHeight: 150)
             .onAppear(perform: startUp)
@@ -90,8 +97,30 @@ struct SunnoApp: App {
 
         devices.configure(httpPort: backend.httpPort)
 
+        // The switcher owns the decision; the app owns the engine and the preference file.
+        models.restart = { model in restartOnModel(model) }
+        models.commit = { model in settings.selectedModel = model }
+        models.notify = { message, severity in
+            store.reportProblem(message, code: nil, severity: severity)
+        }
+        // The one string the app knows to be sensitive, so an engine error that names the
+        // capture device cannot put it in a report.
+        EngineDiagnostics.shared.redactDeviceName(settings.deviceName)
+        recording.onFailure = { message in
+            store.reportProblem(message, code: nil, severity: .warning)
+        }
+        // An engine that dies while a switch is in flight is the switch's failure to handle
+        // first. Only if it declines does the banner report it as a plain crash.
+        backend.onFailure = {
+            if models.engineFailed() { return true }
+            recording.reset()
+            return false
+        }
+
         client.onEvent = { event in
             store.apply(event)
+            recording.apply(event)
+            applyModelSwitch(event)
             // The catalogue is only pushed unprompted when a model is missing. Ask for it
             // once the engine is up so the sidebar picker has something to show.
             if event.kind == .status, event.state == "listening" {
@@ -106,7 +135,9 @@ struct SunnoApp: App {
             backend.start(model: settings.selectedModel,
                           device: settings.deviceIsLoopback ? nil : settings.deviceIndex,
                           loopbackDevice: settings.deviceIsLoopback ? settings.deviceIndex : nil,
-                          forceCPU: settings.forceCPU)
+                          forceCPU: settings.forceCPU,
+                          recordingsPath: settings.recordingsPath,
+                          resumeRecording: recording.activeFolder)
             client.connect(port: backend.wsPort)
             Task {
                 await devices.refresh()
@@ -131,21 +162,34 @@ struct SunnoApp: App {
     }
 
     /// The default input, with whatever device the settings remember.
-    private func startOnMicrophone() {
-        backend.start(model: settings.selectedModel,
+    ///
+    /// `model` overrides the saved preference, which is how a switch reaches the engine
+    /// before the preference has been committed to it.
+    private func startOnMicrophone(model: String? = nil) {
+        backend.start(model: model ?? settings.selectedModel,
                       device: settings.deviceIsLoopback ? nil : settings.deviceIndex,
                       loopbackDevice: settings.deviceIsLoopback ? settings.deviceIndex : nil,
-                      forceCPU: settings.forceCPU)
+                      forceCPU: settings.forceCPU,
+                      recordingsPath: settings.recordingsPath,
+                      resumeRecording: recording.activeFolder)
     }
 
     /// The saved device may have moved. Correct the setting and restart on the right one rather
     /// than captioning whatever now happens to sit at the old index.
+    ///
+    /// When it has gone altogether, say so. A microphone that disappears produces silence,
+    /// and silence is indistinguishable from a quiet room — which is the one failure this app
+    /// cannot afford to leave unexplained.
     private func reconcileSavedDevice() {
-        guard settings.deviceName != nil,
-              let found = devices.resolve(index: settings.deviceIndex,
-                                          name: settings.deviceName,
+        guard let wanted = settings.deviceName else { return }
+
+        guard let found = devices.resolve(index: settings.deviceIndex,
+                                          name: wanted,
                                           isLoopback: settings.deviceIsLoopback)
-        else { return }
+        else {
+            announceMissingDevice(wanted)
+            return
+        }
 
         devices.select(found)
         guard found.index != settings.deviceIndex else { return }
@@ -153,11 +197,42 @@ struct SunnoApp: App {
         restartCapture(on: found)
     }
 
+    /// Re-enumerate, then check the remembered device is still there.
+    private func refreshDevices() {
+        Task {
+            await devices.refresh(fresh: true)
+            reconcileSavedDevice()
+        }
+    }
+
+    /// Three sentences, because the right thing to do next differs in each case.
+    ///
+    /// After a manual refresh the engine is already holding an open stream on a real device,
+    /// so nothing is broken and the app must not restart capture to chase an index — that
+    /// would stop captions mid-conversation to fix something that is not wrong. It only
+    /// offers the choice.
+    private func announceMissingDevice(_ wanted: String) {
+        if devices.lastRefreshWasStale {
+            store.note("\(wanted) is not available. Choose a device below if you want to "
+                       + "switch.")
+            return
+        }
+        if let alternative = devices.selected ?? devices.inputs.first(where: { $0.isDefault })
+                             ?? devices.inputs.first {
+            store.note("\(wanted) is not available, so Sunno is using \(alternative.name) "
+                       + "instead.")
+        } else {
+            store.note("\(wanted) is not available. Choose a microphone below to start "
+                       + "captioning.")
+        }
+    }
+
     private func select(_ device: DeviceCatalog.Device) {
         devices.select(device)
         settings.deviceIndex = device.index
         settings.deviceName = device.name
         settings.deviceIsLoopback = device.isLoopback
+        EngineDiagnostics.shared.redactDeviceName(device.name)
         restartCapture(on: device)
     }
 
@@ -171,7 +246,9 @@ struct SunnoApp: App {
             backend.start(model: settings.selectedModel,
                           device: device.isLoopback ? nil : device.index,
                           loopbackDevice: device.isLoopback ? device.index : nil,
-                          forceCPU: settings.forceCPU)
+                          forceCPU: settings.forceCPU,
+                          recordingsPath: settings.recordingsPath,
+                          resumeRecording: recording.activeFolder)
             return
         }
         Task {
@@ -189,14 +266,16 @@ struct SunnoApp: App {
     /// stopped only once there is something for its replacement to connect to, so a refused
     /// permission leaves the working engine alone rather than killing it for nothing.
     @discardableResult
-    private func startOnSystemAudio() async -> Bool {
+    private func startOnSystemAudio(model: String? = nil) async -> Bool {
         guard await confirmScreenCapturePermission() else { return false }
         do {
             let port = try await systemAudio.start()
             backend.stop()
-            backend.start(model: settings.selectedModel,
+            backend.start(model: model ?? settings.selectedModel,
                           device: nil, loopbackDevice: nil, pcmPort: port,
-                          forceCPU: settings.forceCPU)
+                          forceCPU: settings.forceCPU,
+                          recordingsPath: settings.recordingsPath,
+                          resumeRecording: recording.activeFolder)
 
             // `start` reports failure by setting a status rather than by throwing, so success
             // has to be read back. Returning true regardless left the capture running, the
@@ -261,6 +340,67 @@ struct SunnoApp: App {
     /// The allow-list. Named fields only, and deliberately no device names: a capture device
     /// called "Headset (R-Phonak hearing aid)" says the user wears a hearing aid, which is
     /// health information arriving through a field nobody thinks of as sensitive.
+    /// Everything the model switcher needs to see, in one place.
+    private func applyModelSwitch(_ event: BackendEvent) {
+        switch event.kind {
+        case .status:
+            // The engine names its model on every status frame. "listening" is the first one
+            // that proves it loaded rather than merely started loading it.
+            if event.state == "listening", let model = event.model {
+                models.engineReady(model: model)
+            }
+        case .downloadComplete:
+            if let model = event.model { models.downloadFinished(model) }
+        case .downloadFailed:
+            if let model = event.model { models.downloadFailed(model) }
+        default:
+            break
+        }
+    }
+
+    /// The user chose a model. Download it if needed, then restart onto it.
+    ///
+    /// Deliberately does not write the preference. That happens in `models` once the engine
+    /// reports the model actually running, so a model that cannot be loaded is not the one
+    /// waiting at the next launch.
+    private func selectModel(_ model: String) {
+        models.request(model, currentlyRunning: store.activeModel)
+        client.send(.downloadModel(model))
+    }
+
+    /// Restart the engine onto a model. The engine reads its model once at startup, so this
+    /// is the only way a switch takes effect.
+    private func restartOnModel(_ model: String) {
+        let device = devices.selected
+        systemAudio.stop()
+        backend.stop()
+        if let device, device.isSystemAudio {
+            Task {
+                if await startOnSystemAudio(model: model) == false {
+                    startOnMicrophone(model: model)
+                }
+            }
+            return
+        }
+        startOnMicrophone(model: model)
+    }
+
+    /// Start or stop recording.    ///
+    /// The engine decides; this only refuses the press when there is nothing to send it to,
+    /// because a command dropped into a closed socket looks exactly like a button that does
+    /// nothing.
+    private func toggleRecording() {
+        guard client.connection == .connected else {
+            store.note("Sunno is still starting up.")
+            return
+        }
+        if recording.isRecording {
+            client.send(.stopRecording)
+        } else {
+            client.send(.startRecording(path: settings.recordingsPath))
+        }
+    }
+
     private func diagnosticsReport() -> String {
         let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "dev"
         let build = Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "0"
@@ -285,14 +425,40 @@ struct SunnoApp: App {
         lines.append("Unknown events  \(client.undecodableEvents)")
         lines.append("")
         lines.append("-- Capture --")
+        lines.append("Source          \(settings.deviceIsLoopback ? "system audio" : "microphone")")
+        // Whether, never which. A capture device called "Headset (R-Phonak hearing aid)"
+        // discloses that the user wears a hearing aid, which is health information arriving
+        // through a field nobody thinks of as sensitive.
         lines.append("Device chosen   \(devices.selectedName == nil ? "no, using system default" : "yes")")
+        lines.append("")
+        lines.append("-- Recording --")
+        lines.append("Folder chosen   \(settings.recordingsPath == nil ? "no, using the default" : "yes")")
+        lines.append("State           \(recordingStateLabel)")
         lines.append("")
         lines.append("-- Preferences --")
         lines.append("Caption size    \(Int(settings.captionFontSize))")
         lines.append("Clarity shown   \(settings.showClarity)")
         lines.append("Compact mode    \(settings.isCompact)")
         lines.append("Reduce motion   \(settings.reduceMotion)")
+
+        // The engine's own failure output, allow-listed to lines that look like a Python
+        // error. Without it "the speech engine stopped" is unactionable for whoever receives
+        // the report, which is the whole purpose of the file.
+        if let failure = EngineDiagnostics.shared.collected() {
+            lines.append("")
+            lines.append("-- Last engine failure --")
+            lines.append(failure)
+        }
         return lines.joined(separator: "\n")
+    }
+
+    private var recordingStateLabel: String {
+        switch recording.state {
+        case .idle:      return "not recording"
+        case .recording: return "recording"
+        case .saving:    return "saving"
+        case .saved:     return "saved"
+        }
     }
 
     private func machineArchitecture() -> String {

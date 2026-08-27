@@ -34,6 +34,10 @@ the table at dinner, beside you in a meeting, or pass a small mic to whoever is 
   the one failure this app can least afford.
 - **Handles accented speech well**, which is why the engine is Whisper rather than something
   faster.
+- **Saves a conversation when you want one.** Press record and Sunno writes the audio and its
+  transcript to your Mac when you stop, with speaker labels and timestamps. Nothing is
+  recorded unless you ask, the folder is not even created until the first save, and nothing is
+  uploaded either way. See [Recording](#recording).
 - **Compact mode**, always on top, adjustable text size, and you can select and copy any part of
   the transcript. Hover an uncertain word to see how confident the model was.
 
@@ -51,6 +55,9 @@ not being uploaded anywhere, and you can tell them so honestly.
 
 The only time Sunno touches the network is downloading the speech model on first run. After
 that, never.
+
+Two things get written to disk, and both are yours: a pinned speaker's name and voice
+fingerprint, so Sunno recognises them next time, and any recording you deliberately make.
 
 Two things it deliberately does not do. Device names never reach a log or the diagnostics
 export: a capture device called "Headset (R-Phonak hearing aid)" tells the reader that the user
@@ -172,6 +179,39 @@ The second compares `Theme.swift` against the Windows app's `App.xaml`. It is th
 that needs the other repository, and it reports a skip rather than a pass when there is no
 checkout to compare against. Clone `desigrit/sunno` beside this one, or set `SUNNO_WINDOWS_REPO`.
 
+## Recording
+
+Press the record button, left of the compact-mode button. Sunno writes the audio and its
+transcript when you stop.
+
+```
+~/Sunno/Recordings/Recording/
+  audio.m4a         AAC, 16 kHz mono, about 23 MB an hour
+  transcript.json   speakers, timings, per word offsets
+  transcript.txt    plain text with speaker labels and timestamps
+```
+
+Change the folder in Settings. A few things worth knowing:
+
+- **Nothing is written until you press record.** The folder is not created until the first
+  save, so an install that never records leaves no trace.
+- **Not in Documents, on purpose.** macOS offers to sync Desktop and Documents into iCloud
+  Drive, and it is switched on for a great many people who never chose it deliberately. A
+  recording of a meeting, made by an app whose whole claim is that conversations stay on the
+  machine, should not be uploaded because of a setting nobody read.
+- **A recording ends when you stop it or quit Sunno, and not before.** Pausing, swapping
+  microphone, changing speech model and a dropped USB cable are all gaps inside one recording
+  rather than the end of it.
+- **An interrupted recording is finished on the next launch** rather than lost. Audio is
+  appended as it arrives and each line is written as it is decoded, so a process that dies
+  mid-meeting costs you the sentence being spoken and nothing more.
+- **The audio is the recogniser's own 16 kHz mono stream**, tapped before any conditioning.
+  Right for speech and not archival, but it does mean the audio and the transcript can never
+  disagree, because they are the same samples.
+
+The m4a is produced by `afconvert`, which every Mac already has, so nothing has to be
+installed and the app carries no encoder of its own.
+
 ## System audio
 
 macOS has no equivalent of the Windows loopback capture, and it files system audio under the
@@ -207,10 +247,11 @@ No captioning system is perfect, and anyone who tells you otherwise is selling s
   conversation. `large-v3` is the most accurate on accented speech and you will see it arrive
   late.
 
-  **The delay estimates in the model picker are wrong**, because they are scaled from
-  measurements taken on a Windows machine and no Apple Silicon figure has replaced them. They
-  are now wrong in both directions: too optimistic about `large-v3`, and too pessimistic about
-  what the Neural Engine does with the smaller models. Treat the table above as the real answer.
+  **The delay estimates in the model picker are the measured ones**, taken on an M1 Max, and
+  they are what the table above says. They are not rescaled for a faster Mac, because the
+  benchmark the app has measures the processor and says nothing about the Neural Engine —
+  so a newer machine is quoted these figures until it has run the model once, after which the
+  picker quotes what that machine has actually been seen doing.
   [`docs/MACOS-PORT.md`](docs/MACOS-PORT.md) has the measurements behind it.
 - **The clarity score is off on this engine.** It is hidden rather than shown wrong: WhisperKit
   reports the confidence Whisper had in a different range from the Windows build, so the badge

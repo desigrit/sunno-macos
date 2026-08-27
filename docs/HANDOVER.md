@@ -10,8 +10,8 @@ already cost a day of measurement, or worse, re-introducing a bug that has alrea
 once. Where a section states a number, that number was measured on the machine described in
 [Environment](#16-environment-what-this-was-built-on) unless it says otherwise.
 
-Last updated at commit `d128594`, which is where the app first became something you could download
-and run rather than something you had to build.
+Last updated after recording landed, and after an audit against the Windows client closed a
+handful of defects that could strand a user. See [20](#20-recording) and [13.2](#132-the-model-picker-lied-and-now-does-not).
 
 ---
 
@@ -36,6 +36,7 @@ and run rather than something you had to build.
 17. [How to verify you have not broken anything](#17-how-to-verify-you-have-not-broken-anything)
 18. [File index](#18-file-index)
 19. [Shipping it](#19-shipping-it)
+20. [Recording](#20-recording)
 
 ---
 
@@ -194,7 +195,7 @@ There is one live branch in the other repository from this work:
 | Thing | State | Section |
 |---|---|---|
 | Clarity score | Hidden on the WhisperKit engine. The badge does not appear | [13.1](#131-the-clarity-score) |
-| Model picker delay estimates | Wrong, in both directions. Known and accepted for now | [13.2](#132-the-model-picker-lies) |
+| Model picker delay estimates | Fixed. Quotes measured Apple Silicon figures | [13.2](#132-the-model-picker-lied-and-now-does-not) |
 | `add_context` | Accepted and ignored on the WhisperKit engine | [13.3](#133-add_context-is-ignored) |
 | App Sandbox | Off, and it stays off while the app carries a Python interpreter | [13.5](#135-distribution) |
 | Notarisation | None. First launch needs Privacy & Security → Open Anyway | [19.4](#194-gatekeeper-and-the-step-users-cannot-skip) |
@@ -1112,24 +1113,37 @@ will notice. The README says so plainly.
 both engines, and re-derive both `_clarity_from_logprob` and the `low_confidence_below = 0.55` word
 threshold. Three synthetic clips proved the shift; they cannot calibrate it.
 
-### 13.2 The model picker lies
+### 13.2 The model picker lied, and now does not
 
-**State:** the delay estimates come from `hardware.py`'s tables, scaled by a `cpu_score` that has
-never seen Apple Silicon and never seen Core ML.
+**Was:** the delay estimates came from `hardware.py`'s CPU tables, interpolated by thread count
+and rescaled by a `cpu_score` that has never seen Apple Silicon and never seen Core ML. Those
+tables are CTranslate2 on a processor, and CTranslate2 on macOS reaches neither the GPU nor the
+Neural Engine, so they described work the Mac never does.
 
-**How wrong:** now wrong in **both** directions. Too optimistic about `large-v3` (says 842 ms,
-decodes in 2497 ms) and too pessimistic about what the Neural Engine does with the small ones (says
-194 ms for `small`, which decodes in 370 ms but was quoted against a CPU baseline of 1177 ms).
+How wrong, against the measured figures in [10](#10-every-measurement-taken):
 
-**The sharp end:** `hardware.default_model` scans the catalogue best-accuracy-first and takes the
-first entry marked responsive. Every entry is marked responsive. **So a Mac defaults to
-`large-v3`** — a 3 GB download that does not keep up.
+| Model | Picker said | Measured | Out by |
+|---|---|---|---|
+| `medium` | ~0.5 s, **"keeps up"** | 1362 ms | 2.7× |
+| `large-v3` | ~2 s | 2497 ms | 25% |
 
-**Explicitly accepted for now.** The README warns users and gives the real table.
+`medium` was the bad one: quoted at half a second and marked as keeping up with a conversation,
+when it trails by more than a second.
 
-**To fix:** populate a macOS lag table from measurement, or better, let `record_latency` learn per
-machine and stop shipping a table at all. The machinery to adapt per machine already exists; only
-the numbers are wrong.
+**Now:** `_LAG_MS_ANE` holds the measured M1 Max figures for the four Whisper models that were
+benchmarked, and `estimated_lag_ms` prefers it whenever WhisperKit is the engine that will run —
+checked *before* the CPU tables, since falling through to them quotes a processor time for a
+decode that never touches the processor. `medium` and `large-v3` are now correctly marked as
+trailing, matching the README.
+
+**Deliberately not rescaled for other Macs.** `cpu_score` is a matmul benchmark and says nothing
+about the Neural Engine, so scaling by it would invent precision. A faster Mac is quoted the M1
+Max figures until it has run the model once, at which point `record_latency` — which already
+existed and already wins over any table — replaces them with what that machine has actually been
+seen doing.
+
+**Still open:** `distil-large-v3` was never benchmarked here and falls through to the CPU path.
+Wrong on a Mac, but it is a number somebody wrote down rather than one the file made up.
 
 ### 13.3 `add_context` is ignored
 
@@ -1642,6 +1656,78 @@ Three things learned taking them, each of which cost a wasted attempt:
 Whisper's tokenizer emits words with the space attached — `" Marco"`, not `"Marco"` — and the
 transcript view concatenates tokens verbatim, which is the only way to reproduce spacing around
 punctuation. A stand-in that emits bare words produces `Marco,behonestwithme`.
+
+---
+
+## 20. Recording
+
+Ported from the Windows build, which grew it first, and adapted where macOS differs. The
+design is in `server/recorder.py`'s own docstring; this records what is specific to here.
+
+### 20.1 Where recordings go, and why not Documents
+
+`~/Sunno/Recordings`, matching Windows.
+
+**Deliberately not `~/Documents`.** macOS offers to sync Desktop and Documents into iCloud
+Drive and it is switched on for a great many people who never chose it deliberately. A
+recording of somebody's meeting, made by an app whose central claim is that conversations do
+not leave the machine, would be uploaded the moment it was saved. That is the same hazard
+OneDrive posed on Windows, which is why the Windows build avoids the profile's redirected
+folders too. `~/Music` and `~/Movies` escape the sync but describe the contents wrongly, and
+a recording is half transcript anyway.
+
+### 20.2 `afconvert`, not PyAV
+
+The Windows build declares `av` and transcodes the finished PCM to AAC through FFmpeg. Here
+`_encode` prefers `/usr/bin/afconvert`, which is part of macOS.
+
+The reason is the bundle rather than the encoder. PyAV carries its own FFmpeg, which is tens
+of megabytes inside an app whose whole distribution argument is that the download is small.
+Measured: 96 KB of raw PCM becomes an 11.5 KB m4a, and nothing had to be installed to do it.
+
+PyAV is still tried if it happens to be present, and a real WAV is still the fallback when
+neither works, so the file is playable no matter what.
+
+### 20.3 Word timings now survive the WhisperKit path
+
+`whisperkit-service` was already returning `start` and `end` for every word and
+`asr_whisperkit.py` was dropping them on the floor. They are carried through now, so a saved
+transcript can line up with its audio. Verified in a real run:
+
+```json
+{"t": " This", "p": 0.94, "s": 0.18, "e": 0.36}
+```
+
+### 20.4 What was verified, and how
+
+The unit tests cover the shapes. These were run against a real engine, because the failure
+modes are all about processes dying at bad moments:
+
+| Case | Result |
+|---|---|
+| `SIGKILL` mid-recording | raw audio survives on disk |
+| Restart with `--resume-recording` | engine reports `recording` on the **same** folder |
+| Audio across that restart | appended, 196 KB → 434 KB, not restarted |
+| Folders created | **one**, not two |
+| Stop after a resume | `audio.m4a` + both transcripts |
+| Orphan on next launch | finalised by `recover()` |
+| JSONL line torn by the kill | dropped; the good line before it kept |
+
+### 20.5 Two bugs the review caught here
+
+**`is_unfinished` was not idempotent.** It keyed on the audio file alone, but `finalise`
+legitimately *leaves* `audio.wav` when no encoder was available — it is the final artifact in
+that case, not working state. So a finished recording still looked unfinished and was
+re-read, re-encoded and re-written on every subsequent launch. Rare on a Mac, where
+`afconvert` is always there; on the Windows client, which shares this file and falls back to
+WAV whenever PyAV is missing, it would have been every recording forever. It now also
+requires the transcript to be absent.
+
+**An empty recording was recovered forever.** A folder that captured nothing kept a zero-byte
+`audio.pcm`, which made it look unfinished on every launch. Deleted at the end of `finalise`,
+guarded on the file actually being empty — because `audio is None` is also how a failed
+encode reports itself, and raw audio nobody could encode is precisely the thing not to
+delete.
 
 ---
 

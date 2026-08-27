@@ -11,8 +11,10 @@ struct SpeakerEditor: View {
     let onFinish: (Action) -> Void
 
     enum Action {
-        case rename(String)
-        case setSelf(Bool)
+        /// Both changes together, because they are independent and doing both in one visit
+        /// is the obvious thing to do the first time anybody opens this. Either may be nil,
+        /// meaning "unchanged".
+        case save(name: String?, isSelf: Bool?)
         case merge(into: Int)
         case cancel
     }
@@ -85,25 +87,28 @@ struct SpeakerEditor: View {
         }
     }
 
-    /// One action per save, in a deliberate order.
+    /// One action per save, in a deliberate order — except the two that compose.
     ///
-    /// Merging destroys the id being edited, so a rename issued alongside it would apply to
-    /// a speaker that no longer exists. Merge therefore wins outright and the other fields
-    /// are ignored when it is set.
+    /// Merging destroys the id being edited, so a rename issued alongside it would apply to a
+    /// speaker that no longer exists. Merge therefore wins outright and the other fields are
+    /// ignored when it is set.
+    ///
+    /// Rename and "this is me" are not like that. They are independent, doing both in one
+    /// visit is the obvious thing to do the first time anybody opens this, and an earlier
+    /// version returned after the first match — so naming someone *and* ticking the box threw
+    /// the name away with no message at all.
     private func save() {
         if let target = mergeTarget {
             onFinish(.merge(into: target))
             return
         }
-        if isSelf != speaker.isSelf {
-            onFinish(.setSelf(isSelf))
-            return
-        }
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !trimmed.isEmpty && trimmed != speaker.label {
-            onFinish(.rename(trimmed))
+        let newName = (!trimmed.isEmpty && trimmed != speaker.label) ? trimmed : nil
+        let newSelf = isSelf != speaker.isSelf ? isSelf : nil
+        if newName == nil && newSelf == nil {
+            onFinish(.cancel)
             return
         }
-        onFinish(.cancel)
+        onFinish(.save(name: newName, isSelf: newSelf))
     }
 }

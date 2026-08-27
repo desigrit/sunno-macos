@@ -81,6 +81,20 @@ final class TranscriptStore: ObservableObject {
         /// `mic_denied`, `mic_unavailable`, `capture_failed`, or nil when the engine could
         /// not say. The UI offers a specific remedy only for the ones it recognises.
         let code: String?
+        var severity: Severity = .warning
+
+        /// How alarming this is, which the banner renders differently.
+        ///
+        /// Three levels rather than one, because once the app started reporting that a
+        /// microphone had been swapped, every one of those arrived wearing the same orange
+        /// triangle as a dead engine. "Your headset went away and I picked another one" is
+        /// news, not a fault, and dressing it as a fault teaches people to ignore the banner
+        /// that will one day be telling them nothing is being transcribed.
+        enum Severity: Equatable {
+            case info
+            case warning
+            case error
+        }
     }
 
     struct Download: Equatable {
@@ -91,8 +105,25 @@ final class TranscriptStore: ObservableObject {
 
     /// Surfaced by the app rather than the engine, for failures the engine never sees: it
     /// cannot report that system audio was refused, because on macOS it never touches it.
-    func reportProblem(_ message: String, code: String?) {
-        problem = Problem(message: message, code: code)
+    func reportProblem(_ message: String, code: String?,
+                       severity: Problem.Severity = .warning) {
+        problem = Problem(message: message, code: code, severity: severity)
+    }
+
+    /// Something worth saying that is not a fault: a microphone that changed, a folder that
+    /// will be used next time.
+    ///
+    /// Sticky in the same way a problem is, and deliberately: a notice cleared by the next
+    /// `listening` frame would vanish within a second of appearing, which is how the Windows
+    /// build learned to make these survive status updates.
+    func note(_ message: String) {
+        problem = Problem(message: message, code: nil, severity: .info)
+    }
+
+    /// Clear whatever the banner is showing. The user has dealt with it, or it stopped being
+    /// true.
+    func dismissProblem() {
+        problem = nil
     }
 
     func speaker(_ id: Int?) -> SpeakerRow? {
@@ -116,7 +147,11 @@ final class TranscriptStore: ObservableObject {
             if let running = event.running { isRunning = running }
             if let model = event.model { activeModel = model }
             if let device = event.device { deviceName = device }
-            if event.state == "listening" { problem = nil }
+            // Captions starting clears a fault, because the fault is evidently over. A notice
+            // is not a fault and must survive: "your microphone changed" arrives moments
+            // before the engine reports listening on the replacement, so clearing on that
+            // frame would delete the explanation a fraction of a second after showing it.
+            if event.state == "listening", problem?.severity != .info { problem = nil }
 
             // The clock follows capture, not the socket. Losing the connection does not stop
             // the microphone, and the count measures the conversation rather than any one
@@ -189,8 +224,19 @@ final class TranscriptStore: ObservableObject {
 
         case .error:
             if let running = event.running { isRunning = running }
+            // A capture problem is a warning: captions have stopped but the app has not.
+            // Anything the engine could not name is an error, because an unrecognised
+            // failure is the one most likely to mean nothing is working.
+            let known = ["mic_denied", "mic_unavailable", "capture_failed", "screen_denied"]
             problem = Problem(message: event.message ?? "Something went wrong.",
-                              code: event.code)
+                              code: event.code,
+                              severity: known.contains(event.code ?? "") ? .warning : .error)
+
+        case .recording:
+            // Owned by RecordingController, which the app hands every event to. Named here
+            // rather than swept into `unknown` so the compiler keeps making this decision
+            // explicit if the protocol grows.
+            break
 
         case .unknown:
             break

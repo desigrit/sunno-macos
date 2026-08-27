@@ -30,6 +30,25 @@ final class BackendHost: ObservableObject {
 
     @Published private(set) var status: Status = .notStarted
 
+    /// Asked before a crash is reported, so something else can handle it first.
+    ///
+    /// Returns true when the failure has been dealt with — a model switch falling back to
+    /// the last one that worked, for instance — in which case the banner is left alone. The
+    /// alternative was reporting "the speech engine stopped" underneath a recovery already
+    /// in progress, which reads as two faults where there is one.
+    var onFailure: (() -> Bool)?
+
+    /// The engine's own diagnostic output, for a bug report. Never the transcript.
+    ///
+    /// Built as an allow-list, exactly as the diagnostics export is, and for the same reason:
+    /// this is text the user may hand to a stranger. Only lines that look like a Python
+    /// failure are kept, so a future engine that decided to print a caption could not leak
+    /// one through here. The Windows build excludes its whole engine log from diagnostics
+    /// because filtering it was attempted three times and each round found a way through;
+    /// collecting nothing but tracebacks in the first place is the version of that lesson
+    /// which still leaves something useful to send.
+    @Published private(set) var failureDetail: String?
+
     /// Whether an engine has ever been asked for in this launch. `SunnoApp.startUp` is driven by
     /// `onAppear`, which fires again whenever SwiftUI rebuilds the hierarchy, and startup is not
     /// something to do twice.
@@ -118,7 +137,8 @@ final class BackendHost: ObservableObject {
     }
 
     func start(model: String?, device: Int?, loopbackDevice: Int?, pcmPort: UInt16? = nil,
-               forceCPU: Bool) {
+               forceCPU: Bool, recordingsPath: String? = nil,
+               resumeRecording: String? = nil) {
         guard process == nil else { return }
 
         // Attach to an engine somebody else started, rather than starting one.
@@ -165,6 +185,19 @@ final class BackendHost: ObservableObject {
             arguments.append(contentsOf: ["--pcm-port", String(pcmPort)])
         }
         if forceCPU { arguments.append(contentsOf: ["--compute-device", "cpu"]) }
+        // Only so the engine can finish a recording a previous run was killed during, and so
+        // it looks in the right place for orphans. Every recording that starts normally
+        // carries its own destination on the command that starts it.
+        if let recordingsPath, !recordingsPath.isEmpty {
+            arguments.append(contentsOf: ["--recordings-path", recordingsPath])
+        }
+        // A recording that was running when the engine was restarted for a new microphone or
+        // model. The new process reopens that folder and appends, so the restart shows up as
+        // a gap in the audio rather than as the end of the recording. It also tells the
+        // engine not to treat that folder as an orphan to be finalised on startup.
+        if let resumeRecording, !resumeRecording.isEmpty {
+            arguments.append(contentsOf: ["--resume-recording", resumeRecording])
+        }
 
         let task = Process()
         task.executableURL = python
@@ -181,14 +214,17 @@ final class BackendHost: ObservableObject {
             .appendingPathComponent("Library/Application Support/Sunno").path
         task.environment = environment
 
-        // stdout is read and discarded rather than inherited. The backend prints latency and
+        // stdout is read and scanned rather than inherited. The backend prints latency and
         // speaker ids but never transcript text, and inheriting would put it in the system
-        // log where nobody chose to keep it.
+        // log where nobody chose to keep it. Only lines that look like a failure are kept,
+        // so "Copy details" has something to offer without holding on to the rest.
         let pipe = Pipe()
         task.standardOutput = pipe
         task.standardError = pipe
         pipe.fileHandleForReading.readabilityHandler = { handle in
-            _ = handle.availableData
+            let data = handle.availableData
+            guard !data.isEmpty else { return }
+            EngineDiagnostics.shared.note(String(decoding: data, as: UTF8.self))
         }
 
         task.terminationHandler = { [weak self] finished in
@@ -209,12 +245,19 @@ final class BackendHost: ObservableObject {
                 // starts an engine again once one is running.
                 guard self.process === finished else { return }
                 self.process = nil
+                self.failureDetail = EngineDiagnostics.shared.collected()
+                // Offered to whoever might be expecting this. A model switch that fails is
+                // recoverable and says so itself; only an unclaimed death is a crash.
+                if self.onFailure?() == true { return }
                 self.status = .failed(
                     "The speech engine stopped unexpectedly (exit \(finished.terminationStatus)).")
             }
         }
 
         do {
+            // Forget the last engine's complaints before this one gets a chance to make
+            // its own, so a failure reported later cannot be attributed to a dead process.
+            EngineDiagnostics.shared.reset()
             try task.run()
             process = task
             Self.rememberChild(pid: task.processIdentifier)
@@ -223,6 +266,7 @@ final class BackendHost: ObservableObject {
             // The reason, not just the fact. "could not be started" on its own sends someone
             // looking at the backend when the answer is usually about this side: a venv that
             // names an interpreter which has since been removed, most often.
+            failureDetail = EngineDiagnostics.shared.collected()
             status = .failed("The speech engine could not be started. \(error.localizedDescription)")
         }
     }

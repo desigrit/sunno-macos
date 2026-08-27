@@ -49,6 +49,7 @@ from __future__ import annotations
 
 import functools
 import os
+import sys
 
 # Measured on a Quadro RTX 8000 (float16) and an i9-14900K (int8), faster-whisper 1.x,
 # greedy decode, best of three, utterances of 2/4/8 s averaged. Rerun bench/bench_latency.py
@@ -121,8 +122,33 @@ _LAG_MS_CUDA: dict[str, int] = {
 # waits for an endpoint before it decodes anything, so nobody would see that today. Filing
 # it here would make them win on every machine, including ones with a graphics card,
 # on the strength of a number the app cannot yet deliver.
-_LAG_MS_CPU_4: dict[str, int] = {
-    "stream-en": 135,
+# Apple Silicon, decoding through WhisperKit and Core ML rather than CTranslate2.
+#
+# A separate table because the CPU one describes different hardware doing different work. On
+# a Mac the decode runs on the Neural Engine and the GPU, which the tables above cannot
+# describe at all: they are CTranslate2 on a processor, and CTranslate2 on macOS reaches
+# neither. Interpolating them by thread count and rescaling by a BLAS score, which is what
+# the CPU path does, produces a figure with no relationship to what a Mac actually does --
+# `medium` was quoted at 0.5s against a measured 1.4s, which is the difference between a
+# model that keeps up and one that visibly trails.
+#
+# Measured on an M1 Max (8P+2E) decoding six seconds of speech at the settings the app uses,
+# hallucination guards included. Deliberately NOT rescaled for other Macs: `cpu_score` is a
+# matmul benchmark and says nothing about the Neural Engine, so scaling by it would invent
+# precision. A faster Mac is quoted these figures until it has run the model once, at which
+# point `record_latency` replaces them with what that machine has actually been seen doing.
+#
+# Only the models measured here are listed. Anything absent falls through to the CPU path,
+# which is wrong on a Mac but is at least a number somebody wrote down rather than one this
+# file made up.
+_LAG_MS_ANE: dict[str, int] = {
+    "base": 136,
+    "small": 370,
+    "medium": 1362,
+    "large-v3": 2497,
+}
+
+_LAG_MS_CPU_4: dict[str, int] = {    "stream-en": 135,
     "stream-en-kroko": 120,
     "base": 730,
     "small": 1450,
@@ -461,6 +487,21 @@ def estimated_lag_ms(model_id: str, device: str | None = None) -> int:
     measured = measured_lag_ms(model_id, device)
     if measured is not None:
         return measured
+
+    # On a Mac the decode goes through WhisperKit when its service has been built, which is
+    # different hardware doing different work from anything the CPU tables describe. Checked
+    # before them rather than after, because falling through to a CTranslate2 figure would
+    # quote a processor time for a decode that never touches the processor.
+    if sys.platform == "darwin":
+        from .engine import available_engines
+
+        try:
+            if available_engines().get("whisperkit") and model_id in _LAG_MS_ANE:
+                return _LAG_MS_ANE[model_id]
+        except Exception:
+            # A picker that cannot decide which engine will run is not a reason to show no
+            # picker. Fall through to the tables below.
+            pass
 
     if device == "cuda":
         return _LAG_MS_CUDA.get(model_id, _UNKNOWN_MODEL_LAG_MS)

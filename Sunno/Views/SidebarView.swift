@@ -7,6 +7,9 @@ struct SidebarView: View {
     let onRename: (SpeakerRow) -> Void
     let onDelete: (SpeakerRow) -> Void
     let onSelectModel: (String) -> Void
+    /// The model being switched to, if any. Shown as busy so a click has visible effect
+    /// while the weights download and the engine restarts, which together can take a while.
+    let pendingModel: String?
     let onRefreshModels: () -> Void
 
     @State private var modelSectionOpen = false
@@ -193,7 +196,20 @@ struct SidebarView: View {
 
                 Spacer(minLength: 4)
 
-                if !entry.available {
+                // Busy wins over the size, because a row that is being switched to is no
+                // longer something to download: it is something happening.
+                if entry.id == pendingModel {
+                    if let percent = downloadPercent(entry.id) {
+                        ProgressView(value: percent, total: 100)
+                            .progressViewStyle(.linear)
+                            .frame(width: 54)
+                    } else {
+                        ProgressView()
+                            .controlSize(.small)
+                            .scaleEffect(0.6)
+                            .frame(width: 20)
+                    }
+                } else if !entry.available {
                     HStack(spacing: 4) {
                         Text(sizeLabel(entry))
                             .font(.system(size: 11))
@@ -209,10 +225,24 @@ struct SidebarView: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        // Locked while a switch is running. The engine ignores a second request while it is
+        // downloading and answers nothing, so allowing one here wedges the switcher; and a
+        // row that silently does nothing is worse than one that is visibly unavailable.
+        .disabled(pendingModel != nil && entry.id != pendingModel)
+        .opacity(pendingModel != nil && entry.id != pendingModel ? 0.5 : 1)
         // The pane is 232 points and both lines trim, so the full text has to be reachable.
-        .help(tooltip(entry))
+        .help(pendingModel != nil && entry.id != pendingModel
+              ? "Wait for the model being loaded to finish."
+              : tooltip(entry))
         .accessibilityLabel(tooltip(entry).replacingOccurrences(of: "\n", with: ", "))
         .accessibilityAddTraits(entry.id == store.activeModel ? [.isSelected] : [])
+    }
+
+    /// How far the download for this model has got, or nil when it is not downloading.
+    private func downloadPercent(_ id: String) -> Double? {
+        guard let download = store.download, download.model == id, download.failed == nil
+        else { return nil }
+        return download.percent
     }
 
     /// The description, prefixed with the expected delay. A parenthetical rather than its own

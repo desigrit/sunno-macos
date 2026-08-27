@@ -31,6 +31,10 @@ whisperkit-service/.build/
 .cache/
 dist/
 
-# Working directory for model weights. Reproducible from scripts/fetch-speaker-model.sh, and
-# the same arrangement the Windows build uses, where it also holds benchmark models.
-models/
+# Working directory for model weights, at the repository root only. Reproducible from
+# scripts/fetch-speaker-model.sh, and the same arrangement the Windows build uses.
+#
+# Anchored with a leading slash, and that is load-bearing: an unanchored `models/` matches any
+# directory of that name at any depth, and on a case-insensitive filesystem it also matches
+# `Sunno/Models/`, which quietly excluded two Swift source files from a commit.
+/models/

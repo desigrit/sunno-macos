@@ -16,6 +16,9 @@ struct FirstRunView: View {
     let onDownload: (String) -> Void
 
     @State private var selected: String?
+    /// True once the engine has been silent for long enough that the empty list has stopped
+    /// looking like something still loading.
+    @State private var catalogueOverdue = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -27,8 +30,21 @@ struct FirstRunView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .padding(.horizontal, 40)
         .padding(.vertical, 28)
-        .onAppear(perform: preselect)
-        .onChange(of: store.catalog.count) { _ in preselect() }
+        .onAppear {
+            preselect()
+            // A backstop, because this screen is a dead end when the engine never answers:
+            // the list stays empty, the button stays disabled, and there is nothing on it
+            // that says why or offers a way on. The Windows build learned the same thing and
+            // dismisses its provisional overlay after two minutes.
+            Task {
+                try? await Task.sleep(nanoseconds: 25_000_000_000)
+                if store.catalog.isEmpty { catalogueOverdue = true }
+            }
+        }
+        .onChange(of: store.catalog.count) { _ in
+            preselect()
+            if !store.catalog.isEmpty { catalogueOverdue = false }
+        }
     }
 
     private var header: some View {
@@ -53,6 +69,22 @@ struct FirstRunView: View {
     private var list: some View {
         ScrollView {
             VStack(spacing: 0) {
+                if store.catalog.isEmpty && catalogueOverdue {
+                    // Says what happened and what to do, rather than leaving somebody in
+                    // front of an empty box with a disabled button.
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("The speech engine has not answered.")
+                            .font(.system(size: 13, weight: .medium))
+                        Text("It may still be starting. If this does not clear, quit Sunno "
+                             + "and open it again — the Diagnostics tab in Settings has the "
+                             + "engine's own account of what went wrong.")
+                            .font(.system(size: 11.5))
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(16)
+                }
                 ForEach(store.catalog) { entry in
                     row(entry)
                     if entry.id != store.catalog.last?.id { Divider() }

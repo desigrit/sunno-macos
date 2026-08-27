@@ -127,6 +127,18 @@ SCHEMA: dict[str, dict] = {
     },
     "download_complete": {"fields": ["model"], "optional": [], "note": ""},
     "download_failed": {"fields": ["model", "message"], "optional": [], "note": ""},
+    "recording": {
+        "fields": ["state", "elapsed_s", "folder", "name", "duration_s", "lines", "message"],
+        "optional": ["elapsed_s", "folder", "name", "duration_s", "lines", "message"],
+        "note": "state is idle, recording, saving, saved or failed, and which fields are "
+                "present depends on it: 'recording' carries elapsed_s and folder, 'saved' "
+                "carries name, folder, duration_s and lines, 'failed' carries message. "
+                "elapsed_s is the length of audio written, not wall-clock time since the "
+                "button was pressed; the two differ whenever capture stops and starts inside "
+                "one recording. 'folder' is handed straight back as the resume argument when "
+                "the engine is restarted for a new microphone or model, which is what keeps "
+                "one recording from becoming two.",
+    },
     "error": {
         "fields": ["message", "code", "detail", "running"],
         "optional": ["code", "detail", "running"],
@@ -140,6 +152,7 @@ SCHEMA: dict[str, dict] = {
 COMMANDS = {
     "start", "stop", "toggle", "download_model", "list_models",
     "rename_speaker", "set_self", "merge_speakers", "delete_speaker", "reset_speakers",
+    "start_recording", "stop_recording",
 }
 
 # Entries in a catalog list, from models.catalog_with_status. Documentation only: this one is

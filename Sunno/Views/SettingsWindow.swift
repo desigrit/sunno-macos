@@ -20,6 +20,8 @@ struct SettingsWindow: View {
                 .tabItem { Label("Captions", systemImage: "captions.bubble") }
             EnginePane(settings: settings, store: store)
                 .tabItem { Label("Engine", systemImage: "gearshape") }
+            RecordingsPane(settings: settings)
+                .tabItem { Label("Recordings", systemImage: "record.circle") }
             SpeakersPane(store: store, onCommand: onCommand)
                 .tabItem { Label("Speakers", systemImage: "person.2") }
             DiagnosticsPane(diagnostics: diagnostics)
@@ -76,8 +78,81 @@ private struct EnginePane: View {
     }
 }
 
-private struct SpeakersPane: View {
-    @ObservedObject var store: TranscriptStore
+private struct RecordingsPane: View {
+    @ObservedObject var settings: AppSettings
+
+    /// Resolved for display only. The setting itself stays nil until somebody chooses a
+    /// folder, so the default is not baked into a preference file and the folder is still
+    /// only created when a recording is actually saved.
+    private var effectivePath: String {
+        if let chosen = settings.recordingsPath, !chosen.isEmpty { return chosen }
+        return FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Sunno/Recordings").path
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Recordings are saved here")
+                .font(.system(size: 12, weight: .medium))
+            Text(effectivePath)
+                .font(.system(size: 11.5, design: .monospaced))
+                .foregroundStyle(.secondary)
+                .textSelection(.enabled)
+                .lineLimit(2)
+                .fixedSize(horizontal: false, vertical: true)
+
+            HStack {
+                Button("Change…") { choose() }
+                Button("Open Folder") { reveal() }
+                if settings.recordingsPath != nil {
+                    Button("Use the Default") { settings.recordingsPath = nil }
+                }
+            }
+
+            Divider()
+
+            Text("Nothing is written until you press record, and the folder is not created "
+                 + "until the first recording is saved. Each one is a folder holding the "
+                 + "audio and the transcript, as text and as JSON.")
+                .font(.system(size: 11.5))
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            // Said plainly because the app's whole claim is that conversations stay on the
+            // machine, and a recording is the one thing that outlives the session.
+            Text("Not in Documents by default: macOS syncs Desktop and Documents to iCloud "
+                 + "for a great many people who never chose it, and a recording of a "
+                 + "conversation should not be uploaded because of a setting nobody read.")
+                .font(.system(size: 11.5))
+                .foregroundStyle(.tertiary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            Spacer()
+        }
+        .padding(18)
+    }
+
+    private func choose() {
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.canCreateDirectories = true
+        panel.prompt = "Choose"
+        if panel.runModal() == .OK, let url = panel.url {
+            settings.recordingsPath = url.path
+        }
+    }
+
+    private func reveal() {
+        // Created on demand rather than at startup: an install that never records should
+        // leave nothing behind, and this is the first moment the folder has to exist.
+        let url = URL(fileURLWithPath: effectivePath)
+        try? FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+        NSWorkspace.shared.open(url)
+    }
+}
+
+private struct SpeakersPane: View {    @ObservedObject var store: TranscriptStore
     let onCommand: (BackendCommand) -> Void
 
     var body: some View {
