@@ -42,6 +42,18 @@ final class DeviceCatalog: ObservableObject {
     @Published private(set) var selectedName: String?
     @Published private(set) var lastRefreshWasStale = false
 
+    /// Whether the saved device has been checked against a real list yet.
+    ///
+    /// Claimed once, because the check is worth doing when the engine first answers and is
+    /// noise on every status frame after that.
+    private var reconciled = false
+
+    func claimReconcile() -> Bool {
+        guard !reconciled else { return false }
+        reconciled = true
+        return true
+    }
+
     private var httpPort: Int = 8765
 
     func configure(httpPort: Int) {

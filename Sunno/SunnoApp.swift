@@ -125,6 +125,15 @@ struct SunnoApp: App {
             // once the engine is up so the sidebar picker has something to show.
             if event.kind == .status, event.state == "listening" {
                 client.send(.listModels)
+                // The engine is up, so its device list is answerable now. The refresh at
+                // launch can land before its HTTP server is listening, and reconciling
+                // against an empty list reported a perfectly good microphone as missing.
+                if devices.claimReconcile() {
+                    Task {
+                        await devices.refresh()
+                        reconcileSavedDevice()
+                    }
+                }
             }
         }
 
@@ -139,10 +148,7 @@ struct SunnoApp: App {
                           recordingsPath: settings.recordingsPath,
                           resumeRecording: recording.activeFolder)
             client.connect(port: backend.wsPort)
-            Task {
-                await devices.refresh()
-                reconcileSavedDevice()
-            }
+            Task { await devices.refresh() }
             return
         }
 
@@ -182,6 +188,14 @@ struct SunnoApp: App {
     /// cannot afford to leave unexplained.
     private func reconcileSavedDevice() {
         guard let wanted = settings.deviceName else { return }
+
+        // An empty catalogue means the engine has not answered yet, not that every microphone
+        // has gone. At startup the refresh can land before the engine's HTTP server is up,
+        // and announcing from that produced "MacBook Pro Microphone is not available" over a
+        // session that was captioning from it perfectly well. A banner that cries wolf is
+        // worse than no banner: this one has to be believed the day it says the microphone
+        // really has gone.
+        guard !devices.inputs.isEmpty || !devices.outputs.isEmpty else { return }
 
         guard let found = devices.resolve(index: settings.deviceIndex,
                                           name: wanted,

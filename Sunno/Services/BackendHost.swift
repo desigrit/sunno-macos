@@ -207,6 +207,20 @@ final class BackendHost: ObservableObject {
         var environment = ProcessInfo.processInfo.environment
         environment["PYTHONUTF8"] = "1"
         environment["PYTHONUNBUFFERED"] = "1"
+        // Keep compiled bytecode out of the app bundle.
+        //
+        // Python writes `__pycache__` beside every module it imports, and in a shipped build
+        // those modules live inside `Sunno.app`. Writing there breaks the bundle's code
+        // signature — 37 directories' worth, on the first run — and macOS keys a permission
+        // grant to that signature, so the microphone and screen-recording access a user has
+        // already granted can be lost on the first launch after installing.
+        //
+        // Redirected rather than disabled: `PYTHONDONTWRITEBYTECODE` would fix the signature
+        // and pay for it by recompiling the whole engine on every start, which is time added
+        // to the one part of the app a user is already waiting on.
+        environment["PYTHONPYCACHEPREFIX"] = FileManager.default
+            .homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/Caches/com.desigrit.sunno/pycache").path
         // Keep the writable profile where macOS expects it rather than in the Linux-style
         // ~/.sunno that server/paths.py falls back to on any non-Windows platform.
         environment["Sunno_DATA_DIR"] = FileManager.default

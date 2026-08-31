@@ -166,6 +166,11 @@ ENT
 # ---------------------------------------------------------------- signing
 
 echo "==> signing"
+# Before anything is sealed. Python writes __pycache__ beside every module it imports, so a
+# build whose engine was run from inside the bundle by hand would otherwise seal that bytecode
+# in -- and the next run would write more of it and break the seal. The app itself sets
+# PYTHONPYCACHEPREFIX so a running engine writes elsewhere; this covers the build machine.
+find "$ENGINE" -name "__pycache__" -type d -exec rm -rf {} + 2>/dev/null || true
 # The interpreter needs the same library-validation exception the app declares, and needs it
 # in its own signature: entitlements do not inherit. Without it the hardened runtime refuses
 # every native extension Python tries to load, with "mapping process and mapped file
@@ -211,7 +216,11 @@ echo "    signed $signed binaries inside the bundle"
 codesign --force --sign "$IDENTITY" --options runtime \
   --entitlements "$OUT/Sunno.entitlements" "$APP"
 
-codesign --verify --deep --strict "$APP" && echo "    signature verifies"
+codesign --verify --deep --strict "$APP" || {
+  echo "    SIGNATURE INVALID - refusing to ship this bundle"
+  exit 1
+}
+echo "    signature verifies"
 
 # ---------------------------------------------------------------- the zip
 
