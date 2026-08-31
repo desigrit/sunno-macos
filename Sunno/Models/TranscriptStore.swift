@@ -32,6 +32,16 @@ struct CaptionLine: Identifiable, Equatable {
     var words: [WordScore]
     var startedAt: Date?
 
+    /// Who said this, captured at the moment the engine that heard them was replaced.
+    ///
+    /// Speaker ids are not stable across engine processes — the roster is rebuilt from voice
+    /// profiles and handed fresh, compact ids — so a line from an earlier session must stop
+    /// resolving its speaker against the live roster. Without this, restarting for system
+    /// audio re-credited everything already on screen to whoever happened to take the same id
+    /// in the new process. In a transcript that is, for a deaf user, the only record of who
+    /// said what.
+    var frozenSpeaker: SpeakerRow?
+
     struct WordScore: Equatable {
         let text: String
         let probability: Double
@@ -91,7 +101,13 @@ final class TranscriptStore: ObservableObject {
     private var generation = 0
 
     /// A new engine is starting. Anything it says from here belongs to a new numbering.
+    ///
+    /// Everything already on screen has its speaker written into it first, because the roster
+    /// about to arrive describes different people under the same ids.
     func beginEngineSession() {
+        for index in lines.indices where lines[index].frozenSpeaker == nil {
+            lines[index].frozenSpeaker = speaker(lines[index].speakerId)
+        }
         generation += 1
     }
 
@@ -154,6 +170,16 @@ final class TranscriptStore: ObservableObject {
         return speakers.first { $0.id == id }
     }
 
+    /// The speaker for a line, which is not the same question as the speaker for an id.
+    ///
+    /// A line from the engine session running now resolves against the live roster, so a
+    /// rename or a merge relabels it. A line from an earlier one uses what was frozen into it,
+    /// because its id no longer means the same person.
+    func speaker(for line: CaptionLine) -> SpeakerRow? {
+        if let frozen = line.frozenSpeaker { return frozen }
+        return speaker(line.speakerId)
+    }
+
     func clear() {
         lines.removeAll()
         // A new conversation, so the count starts over. The only thing that resets it.
@@ -212,14 +238,18 @@ final class TranscriptStore: ObservableObject {
         case .speakerMerged:
             // Before the roster, on purpose. See the type comment.
             if let from = event.mergedFrom, let into = event.mergedInto {
-                for index in lines.indices where lines[index].speakerId == from {
+                for index in lines.indices
+                where lines[index].generation == generation
+                    && lines[index].speakerId == from {
                     lines[index].speakerId = into
                 }
             }
 
         case .speakerDeleted:
             if let id = event.id {
-                for index in lines.indices where lines[index].speakerId == id {
+                for index in lines.indices
+                where lines[index].generation == generation
+                    && lines[index].speakerId == id {
                     lines[index].speakerId = nil
                 }
             }

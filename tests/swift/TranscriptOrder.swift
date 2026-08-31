@@ -78,6 +78,38 @@ func check() {
         failures.append("discard reached back into a previous engine session")
     }
 
+    // ---- who said what, across a restart -------------------------------------------
+    //
+    // Speaker ids are not stable across engine processes either. The roster is rebuilt from
+    // voice profiles and handed fresh, compact ids, so a line from an earlier session must
+    // stop resolving against the live roster or it is re-credited to whoever now holds its
+    // id. In a transcript that is, for a deaf user, the only record of who said what.
+    let fresh = TranscriptStore()
+    fresh.beginEngineSession()
+    fresh.apply(decode("{\"type\":\"roster\",\"speakers\":[{\"id\":1,\"label\":\"Priya\",\"named\":true,\"is_self\":false}]}"))
+    fresh.apply(decode("{\"type\":\"final\",\"id\":1,\"text\":\"Priya said this\",\"speaker_id\":1}"))
+    let spokenBy = fresh.speaker(for: fresh.lines[0])?.label
+
+    fresh.beginEngineSession()
+    fresh.apply(decode("{\"type\":\"roster\",\"speakers\":[{\"id\":1,\"label\":\"Marco\",\"named\":true,\"is_self\":false}]}"))
+    fresh.apply(decode("{\"type\":\"final\",\"id\":1,\"text\":\"Marco said this\",\"speaker_id\":1}"))
+    print("speaker of the first line, after a restart: \(fresh.speaker(for: fresh.lines[0])?.label ?? "nobody")")
+    if fresh.speaker(for: fresh.lines[0])?.label != spokenBy {
+        failures.append("a restart re-credited an earlier line to a different person")
+    }
+    if fresh.speaker(for: fresh.lines[1])?.label != "Marco" {
+        failures.append("the new session's own line lost its speaker")
+    }
+
+    // A rename still relabels the lines it should: the current session's.
+    fresh.apply(decode("{\"type\":\"roster\",\"speakers\":[{\"id\":1,\"label\":\"Marco B\",\"named\":true,\"is_self\":false}]}"))
+    if fresh.speaker(for: fresh.lines[1])?.label != "Marco B" {
+        failures.append("a rename stopped reaching the current session's lines")
+    }
+    if fresh.speaker(for: fresh.lines[0])?.label != spokenBy {
+        failures.append("a rename reached back into a frozen line")
+    }
+
     print()
     if failures.isEmpty {
         print("ALL PASS")

@@ -12,7 +12,7 @@ struct TranscriptView: View {
                 LazyVStack(alignment: .leading, spacing: 14) {
                     ForEach(store.lines) { line in
                         CaptionRow(line: line,
-                                   speaker: store.speaker(line.speakerId),
+                                   speaker: store.speaker(for: line),
                                    settings: settings,
                                    isCompact: isCompact,
                                    onCopyAll: copyAll)
@@ -46,7 +46,7 @@ struct TranscriptView: View {
         let body = store.lines
             .filter { $0.isFinal }
             .map { TranscriptView.plainText(line: $0,
-                                            speaker: store.speaker($0.speakerId),
+                                            speaker: store.speaker(for: $0),
                                             includeMeta: true) }
             .joined(separator: "\n")
         NSPasteboard.general.clearContents()
