@@ -67,7 +67,12 @@ struct Reply: Encodable {
     var words: [WordOut]?
     var decodeMs: Double?
     var model: String?
+    /// Which part of the chip each stage runs on, so a diagnostics report can say rather
+    /// than assume. The decoder is the one that dominates, but the encoder is where the GPU
+    /// earns its place and a silent fallback to the processor is exactly the kind of thing
+    /// that would otherwise only show up as "it got slower".
     var computeUnits: String?
+    var computeDetail: [String: String]?
     /// Set on the frames sent while a download runs. The caller keeps reading until a frame
     /// arrives without it, which is the terminal one.
     var progress: Double?
@@ -78,6 +83,7 @@ struct Reply: Encodable {
         case avgLogprob = "avg_logprob"
         case decodeMs = "decode_ms"
         case computeUnits = "compute_units"
+        case computeDetail = "compute_detail"
     }
 }
 
@@ -148,9 +154,16 @@ func downloadBaseURL(_ request: Request) -> URL? {
 
 @MainActor
 func load(_ model: String, base: URL?) async throws {
-    // The defaults already spread the work across the chip: the mel and encoder go to the GPU
-    // and the text decoder to the Neural Engine. That is the whole point of this service, so
-    // they are left alone rather than pinned to something narrower.
+    // The defaults already spread the work across the chip, and the `load` reply reports
+    // exactly how rather than leaving it to a comment to drift. Measured on an M1 Max:
+    //
+    //     mel            cpu+gpu
+    //     audio_encoder  cpu+ane
+    //     text_decoder   cpu+ane
+    //
+    // Left alone rather than pinned to something narrower. Core ML picks per operation and
+    // per chip generation, and overriding it here would mean re-deriving that choice for
+    // every Mac rather than letting the runtime do what it is for.
     let compute = ModelComputeOptions()
     let config = WhisperKitConfig(model: model, downloadBase: base, computeOptions: compute)
     whisper = try await WhisperKit(config)
@@ -197,8 +210,14 @@ func handle(_ request: Request, audio: [Float]) async -> Reply {
         }
         do {
             try await load(model, base: downloadBaseURL(request))
+            let options = ModelComputeOptions()
             return Reply(ok: true, model: model,
-                         computeUnits: describe(ModelComputeOptions().textDecoderCompute))
+                         computeUnits: describe(options.textDecoderCompute),
+                         computeDetail: [
+                             "mel": describe(options.melCompute),
+                             "audio_encoder": describe(options.audioEncoderCompute),
+                             "text_decoder": describe(options.textDecoderCompute),
+                         ])
         } catch {
             return Reply(ok: false, error: "could not load \(model): \(error)")
         }

@@ -650,10 +650,21 @@ async def run(settings: Settings, args: argparse.Namespace) -> None:
         # Not every model is a Whisper checkpoint any more, and this line ends up in the
         # backend log a user attaches to a bug report, where "Loading Whisper stream-en"
         # would send whoever reads it looking for a Whisper model that does not exist.
+        from .engine import resolve_engine
         from .models import is_stream_model
 
+        # `settings.device` is CTranslate2's word for where *it* would run, and on macOS the
+        # answer is always "cpu" because CTranslate2 reaches nothing else. Printing it while
+        # WhisperKit decodes on the Neural Engine said "Loading Whisper small (int8) on cpu"
+        # over a run that never touched the processor for the decode, in the one line a
+        # maintainer reads first when a bug report says captions are slow. The engine that
+        # will actually run gets to name itself, and reports its own compute units a moment
+        # later once Core ML has resolved them.
+        chosen = resolve_engine(args.engine, settings.model_size)
         if is_stream_model(settings.model_size):
             print(f"\nLoading {settings.model_size} on cpu ...")
+        elif chosen == "whisperkit":
+            print(f"\nLoading Whisper {settings.model_size} through WhisperKit ...")
         else:
             print(f"\nLoading Whisper {settings.model_size} ({settings.compute_type}) on "
                   f"{settings.device} ...")

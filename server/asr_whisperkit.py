@@ -214,6 +214,13 @@ class WhisperKitEngine:
             self.close()
             raise
         self.compute_units = reply.get("compute_units", "unknown")
+        # Per stage, because "is it using the Neural Engine" has three answers and they are
+        # not the same one. Printed at startup so a diagnostics report says which part of the
+        # chip did the work rather than leaving it to be assumed.
+        self.compute_detail = reply.get("compute_detail") or {}
+        if self.compute_detail:
+            stages = ", ".join(f"{k} {v}" for k, v in sorted(self.compute_detail.items()))
+            print(f"Whisper compute: {stages}", flush=True)
 
     # --- wire ----------------------------------------------------------
 
