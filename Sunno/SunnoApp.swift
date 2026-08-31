@@ -141,6 +141,7 @@ struct SunnoApp: App {
         // up on the microphone and swapping to system audio afterwards costs a model load that
         // is thrown away, which is half a minute of empty window for nothing.
         guard settings.deviceName == DeviceCatalog.systemAudio.name else {
+            store.beginEngineSession()
             backend.start(model: settings.selectedModel,
                           device: settings.deviceIsLoopback ? nil : settings.deviceIndex,
                           loopbackDevice: settings.deviceIsLoopback ? settings.deviceIndex : nil,
@@ -172,6 +173,7 @@ struct SunnoApp: App {
     /// `model` overrides the saved preference, which is how a switch reaches the engine
     /// before the preference has been committed to it.
     private func startOnMicrophone(model: String? = nil) {
+        store.beginEngineSession()
         backend.start(model: model ?? settings.selectedModel,
                       device: settings.deviceIsLoopback ? nil : settings.deviceIndex,
                       loopbackDevice: settings.deviceIsLoopback ? settings.deviceIndex : nil,
@@ -257,6 +259,7 @@ struct SunnoApp: App {
         guard device.isSystemAudio else {
             systemAudio.stop()
             backend.stop()
+            store.beginEngineSession()
             backend.start(model: settings.selectedModel,
                           device: device.isLoopback ? nil : device.index,
                           loopbackDevice: device.isLoopback ? device.index : nil,
@@ -285,7 +288,8 @@ struct SunnoApp: App {
         do {
             let port = try await systemAudio.start()
             backend.stop()
-            backend.start(model: model ?? settings.selectedModel,
+            store.beginEngineSession()
+        backend.start(model: model ?? settings.selectedModel,
                           device: nil, loopbackDevice: nil, pcmPort: port,
                           forceCPU: settings.forceCPU,
                           recordingsPath: settings.recordingsPath,

@@ -10,7 +10,21 @@ import SwiftUI
 /// comment is worth repeating: in a transcript, for a deaf user, this is the only record of
 /// who said what.
 struct CaptionLine: Identifiable, Equatable {
-    let id: Int
+    /// The engine's utterance number. Unique within one engine process and **not** beyond it:
+    /// the pipeline counts from zero, so every restart hands out 1, 2, 3 again.
+    let utteranceId: Int
+
+    /// Which engine process produced this line.
+    ///
+    /// Without it the client keys on `utteranceId` alone, and a restart — switching to system
+    /// audio, changing microphone, changing model — makes the new process's first utterance
+    /// match the transcript's oldest line and overwrite it. What that looks like from the
+    /// outside is new speech appearing at the *top* of the transcript and the conversation
+    /// being eaten from the beginning.
+    let generation: Int
+
+    var id: String { "\(generation).\(utteranceId)" }
+
     var text: String
     var speakerId: Int?
     var isFinal: Bool
@@ -71,6 +85,15 @@ final class TranscriptStore: ObservableObject {
     /// times a second does not invalidate every view watching this store. See `AudioMeter`.
     let meter = AudioMeter()
     let clock = SessionClock()
+
+    /// Bumped for every engine process, so utterance numbers from different ones cannot
+    /// collide. See `CaptionLine.generation`.
+    private var generation = 0
+
+    /// A new engine is starting. Anything it says from here belongs to a new numbering.
+    func beginEngineSession() {
+        generation += 1
+    }
 
     @Published private(set) var problem: Problem?
     @Published private(set) var download: Download?
@@ -167,7 +190,11 @@ final class TranscriptStore: ObservableObject {
             upsert(event)
 
         case .discard:
-            if let id = event.id { lines.removeAll { $0.id == id && !$0.isFinal } }
+            if let id = event.id {
+                lines.removeAll {
+                    $0.generation == generation && $0.utteranceId == id && !$0.isFinal
+                }
+            }
 
         case .speechStart:
             break   // No visual today. Kept for latency work; see the contract test.
@@ -254,7 +281,9 @@ final class TranscriptStore: ObservableObject {
         }
         let startedAt = event.startedAt.map { Date(timeIntervalSince1970: $0) }
 
-        if let index = lines.firstIndex(where: { $0.id == id }) {
+        if let index = lines.firstIndex(where: {
+            $0.generation == generation && $0.utteranceId == id
+        }) {
             lines[index].text = event.text ?? lines[index].text
             lines[index].isFinal = (event.kind == .final)
             lines[index].clarity = event.clarity
@@ -262,7 +291,8 @@ final class TranscriptStore: ObservableObject {
             if let speakerId = event.speakerId { lines[index].speakerId = speakerId }
         } else {
             lines.append(CaptionLine(
-                id: id,
+                utteranceId: id,
+                generation: generation,
                 text: event.text ?? "",
                 speakerId: event.speakerId,
                 isFinal: event.kind == .final,
