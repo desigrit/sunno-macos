@@ -1,5 +1,6 @@
 """Native conversion and metadata checks. No microphone capture or saved audio."""
 import json
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -23,9 +24,10 @@ def run(*arguments):
 
 
 import plistlib
-signature = subprocess.run(["codesign", "-d", "--entitlements", "-", str(HELPER)],
+signature = subprocess.run(["codesign", "-d", "--entitlements", "-", "--xml", str(HELPER)],
                            capture_output=True, timeout=8)
-if signature.returncode == 0 and signature.stdout.strip():
+if os.environ.get("SUNNO_CAPTURE_HELPER"):
+    assert signature.returncode == 0 and signature.stdout.strip(), "Packaged helper must be signed"
     entitlements = plistlib.loads(signature.stdout)
     assert entitlements.get("com.apple.security.device.audio-input") is True
     print("PASS signed capture helper has its own hardened microphone entitlement")
