@@ -38,3 +38,7 @@ dist/
 # directory of that name at any depth, and on a case-insensitive filesystem it also matches
 # `Sunno/Models/`, which quietly excluded two Swift source files from a commit.
 /models/
+
+# Local-only hardware reports, recordings and development logs.
+local/
+*.log

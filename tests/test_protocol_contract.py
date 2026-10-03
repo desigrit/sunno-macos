@@ -57,8 +57,14 @@ SERVER = ROOT / "server"
 # only once there is a model and a device, and `error` carries `code` and `detail` only when
 # the failure is one the UI can offer a fix for.
 SCHEMA: dict[str, dict] = {
+    "input": {
+        "fields": ["state", "request_id", "target", "active", "wanted", "running",
+                   "committed", "message", "code", "kind", "endpoint_id", "name", "index", "follow_default"],
+        "optional": ["active", "message", "code"],
+        "note": "Capture selection and recovery. Commit preferences only on a committed acknowledgement.",
+    },
     "status": {
-        "fields": ["state", "running", "model", "device"],
+        "fields": ["state", "running", "wanted", "model", "device"],
         "optional": ["running", "model", "device"],
         "note": "state is one of starting, loading, listening, stopped.",
     },
@@ -153,6 +159,7 @@ COMMANDS = {
     "start", "stop", "toggle", "download_model", "list_models",
     "rename_speaker", "set_self", "merge_speakers", "delete_speaker", "reset_speakers",
     "start_recording", "stop_recording",
+    "set_input", "devices_changed",
 }
 
 # Entries in a catalog list, from models.catalog_with_status. Documentation only: this one is
@@ -171,6 +178,7 @@ CATALOG_FIELDS = [
 DEVICE_FIELDS = {
     "index", "name", "channels", "default_samplerate", "hostapi",
     "is_default_input", "is_default_output", "loopback",
+    "endpoint_id",
 }
 
 # Fields a client is allowed to rely on. Deliberately narrower than what is served: `hostapi`
@@ -184,11 +192,11 @@ DEVICE_FIELDS_USED_BY_CLIENTS = {
 def device_fields_in_source() -> set[str]:
     """Keys the backend actually puts in a device entry."""
     found: set[str] = set()
-    for name in ("audio.py", "loopback.py", "app.py"):
+    for name in ("audio.py", "loopback.py", "app.py", "mac_audio.py"):
         text = (SERVER / name).read_text(encoding="utf-8")
         # Dict literals keyed by string, plus the d["..."] = assignments used for the flags.
         found.update(re.findall(r'"(index|name|channels|default_samplerate|hostapi|'
-                                r'is_default_input|is_default_output|loopback)"', text))
+                                r'is_default_input|is_default_output|loopback|endpoint_id)"', text))
     return found
 
 
@@ -218,7 +226,9 @@ def swift_device_keys() -> set[str] | None:
 
 
 def _sources() -> list[Path]:
-    return sorted(p for p in SERVER.glob("*.py") if p.name != "__init__.py")
+    # capture_worker speaks private ready/audio IPC, never the WebSocket protocol.
+    return sorted(p for p in SERVER.glob("*.py")
+                  if p.name not in ("__init__.py", "capture_worker.py"))
 
 
 # Where the Swift client lives, when it is reachable from here.

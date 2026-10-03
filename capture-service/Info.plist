@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>CFBundleIdentifier</key><string>com.desigrit.sunno.capture-service</string>
+  <key>NSMicrophoneUsageDescription</key>
+  <string>Sunno turns audio into captions on this Mac. Audio is saved only when you choose to record, and never leaves this computer.</string>
+  <key>NSScreenCaptureUsageDescription</key>
+  <string>Sunno captions the audio this Mac is playing. No picture of the screen is read or kept.</string>
+</dict></plist>

@@ -19,8 +19,8 @@ options:
 
 settings:
   base:
-    MARKETING_VERSION: "0.1.0"
-    CURRENT_PROJECT_VERSION: "1"
+    MARKETING_VERSION: "0.2.0"
+    CURRENT_PROJECT_VERSION: "2"
     SWIFT_VERSION: "5.9"
     DEAD_CODE_STRIPPING: YES
     ENABLE_HARDENED_RUNTIME: YES
@@ -50,8 +50,8 @@ targets:
         # happens to it, in one sentence, because the people who use this app came to it
         # because they cannot hear well and a vague prompt is a barrier.
         NSMicrophoneUsageDescription: >-
-          Sunno turns what it hears into captions on this Mac. Audio is never recorded to
-          disk and never leaves this computer.
+          Sunno turns what it hears into captions on this Mac. Audio is saved only when you
+          choose to record, and never leaves this computer.
         NSSpeechRecognitionUsageDescription: >-
           Sunno recognises speech entirely on this Mac. Nothing is sent to any server.
         # Only used on the ScreenCaptureKit capture path. macOS files system audio under the

@@ -53,6 +53,11 @@ swiftc \
 
 # ---------------------------------------------------------------- the speech service
 
+echo "==> building the isolated audio service"
+(cd capture-service && swift build -c release)
+mkdir -p "$ENGINE/capture-service/.build/release"
+cp capture-service/.build/release/capture-service "$ENGINE/capture-service/.build/release/"
+
 echo "==> building the WhisperKit service"
 # SwiftPM keeps its checkouts as bare repositories, which git refuses to read when
 # safe.bareRepository is "explicit". Overridden for this command only, through the
@@ -131,7 +136,7 @@ cat > "$APP/Contents/Info.plist" <<PLIST
   <key>NSPrincipalClass</key><string>NSApplication</string>
   <key>NSHighResolutionCapable</key><true/>
   <key>NSMicrophoneUsageDescription</key>
-  <string>Sunno turns what it hears into captions on this Mac. Audio is never recorded to disk and never leaves this computer.</string>
+  <string>Sunno turns what it hears into captions on this Mac. Audio is saved only when you choose to record, and never leaves this computer.</string>
   <key>NSSpeechRecognitionUsageDescription</key>
   <string>Sunno recognises speech entirely on this Mac. Nothing is sent to any server.</string>
   <key>NSScreenCaptureUsageDescription</key>
@@ -198,6 +203,11 @@ IDENTITY="${SUNNO_IDENTITY:-$(security find-certificate -c "Sunno Local Dev" -Z 
 signed=0
 while IFS= read -r macho; do
   case "$macho" in
+    */capture-service)
+      # Capture runs in its own hardened process; entitlements do not inherit.
+      codesign --force --sign "$IDENTITY" --options runtime \
+        --entitlements "$ROOT/capture-service/Entitlements.plist" --timestamp=none "$macho"
+      ;;
     # Anything that loads native extensions is a loader and needs the exception. Everything
     # else only needs a valid signature.
     */bin/python*|*/whisperkit-service)
