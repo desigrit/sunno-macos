@@ -48,6 +48,7 @@ jobs:
         run: python tests/test_native_capture_service.py
       - name: Capture supervisor and control integration
         run: |
+          python tests/test_app_startup.py
           python tests/test_capture_recovery.py
           python tests/test_audio_switching_observer.py
       - name: Swift input, model, recording and transcript checks
