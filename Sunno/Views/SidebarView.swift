@@ -12,9 +12,9 @@ struct SidebarView: View {
     let pendingModel: String?
     let onRefreshModels: () -> Void
 
-    @State private var modelSectionOpen = false
-    @State private var pendingDownload: BackendEvent.CatalogEntry?
-    @State private var listHeight: CGFloat = 0
+    @ViewState private var modelSectionOpen = false
+    @ViewState private var pendingDownload: BackendEvent.CatalogEntry?
+    @ViewState private var listHeight: CGFloat = 0
 
     var body: some View {
         VStack(spacing: 0) {

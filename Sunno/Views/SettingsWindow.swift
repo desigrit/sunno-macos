@@ -193,7 +193,7 @@ private struct SpeakersPane: View {    @ObservedObject var store: TranscriptStor
 /// deliberately put on it. See `app/Services/Diagnostics.cs`, whose reasoning this inherits.
 private struct DiagnosticsPane: View {
     let diagnostics: () -> String
-    @State private var text: String = ""
+    @ViewState private var text: String = ""
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {

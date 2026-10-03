@@ -236,9 +236,7 @@ final class BackendHost: ObservableObject {
             .appendingPathComponent("Library/Caches/com.desigrit.sunno/pycache").path
         // Keep the writable profile where macOS expects it rather than in the Linux-style
         // ~/.sunno that server/paths.py falls back to on any non-Windows platform.
-        environment["Sunno_DATA_DIR"] = FileManager.default
-            .homeDirectoryForCurrentUser
-            .appendingPathComponent("Library/Application Support/Sunno").path
+        environment["Sunno_DATA_DIR"] = BackendProfile.directory().path
         task.environment = environment
 
         // stdout is read and scanned rather than inherited. The backend prints latency and
@@ -382,8 +380,7 @@ final class BackendHost: ObservableObject {
     /// Alongside the profile the backend already writes, which is the directory `start()`
     /// hands the child as `Sunno_DATA_DIR`.
     private nonisolated static func recordURL() -> URL? {
-        let directory = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent("Library/Application Support/Sunno", isDirectory: true)
+        let directory = BackendProfile.directory()
         do {
             try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         } catch {

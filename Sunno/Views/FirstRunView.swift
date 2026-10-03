@@ -15,10 +15,10 @@ struct FirstRunView: View {
     @ObservedObject var settings: AppSettings
     let onDownload: (String) -> Void
 
-    @State private var selected: String?
+    @ViewState private var selected: String?
     /// True once the engine has been silent for long enough that the empty list has stopped
     /// looking like something still loading.
-    @State private var catalogueOverdue = false
+    @ViewState private var catalogueOverdue = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {

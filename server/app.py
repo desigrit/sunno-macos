@@ -7,7 +7,10 @@ import asyncio
 import functools
 import http.server
 import json
+import os
 import socket
+import socketserver
+import sys
 import threading
 import time
 from pathlib import Path
@@ -145,10 +148,20 @@ class _UiRequestHandler(http.server.SimpleHTTPRequestHandler):
         pass
 
 
+class _UiHttpServer(http.server.ThreadingHTTPServer):
+    def server_bind(self) -> None:
+        # HTTPServer normally reverse-resolves even 127.0.0.1 during binding.
+        # Sunno serves local assets and needs no hostname. A slow/offline resolver
+        # must not prevent its control socket and speech engine from starting.
+        socketserver.TCPServer.server_bind(self)
+        self.server_name = self.server_address[0]
+        self.server_port = self.server_address[1]
+
+
 def _serve_ui(host: str, port: int, ws_port: int) -> None:
     handler = functools.partial(_UiRequestHandler, directory=str(UI_DIR))
     _UiRequestHandler.ws_port = ws_port
-    httpd = http.server.ThreadingHTTPServer((host, port), handler)
+    httpd = _UiHttpServer((host, port), handler)
     threading.Thread(target=httpd.serve_forever, name="ui-http", daemon=True).start()
 
 
