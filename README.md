@@ -214,6 +214,13 @@ installed and the app carries no encoder of its own.
 
 ## System audio
 
+Input switching now keeps the speech engine, captions and active recording alive.
+Choose `macOS default (Input)` to follow the Mac's default microphone, or select a
+named microphone to pin that device. System audio remains `System audio (this Mac)`
+because it captures application audio, not one output device. See
+[audio recovery and real-Mac checks](docs/AUDIO-RECOVERY.md) for behavior, automated
+coverage and the hardware tests that still need a Mac.
+
 macOS has no equivalent of the Windows loopback capture, and it files system audio under the
 screen recording permission. So the app says, in its own words and before the system asks, that
 it needs that permission because that is where the audio lives and that no picture of your screen
@@ -277,7 +284,8 @@ microphone ─┐                                    ┌─ WhisperKit, on the N
 system audio┘   (ScreenCaptureKit)               └─ CTranslate2, on the processor
 ```
 
-A Python engine does capture and recognition. A SwiftUI app displays the results and talks to it
+A disposable Swift service owns capture; the Python engine supervises it and does recognition.
+A SwiftUI app displays the results and talks to the engine
 over a local WebSocket. They are separate processes on purpose: a crash in inference leaves the
 window alive and reconnecting instead of taking the app down mid-conversation.
 
@@ -287,6 +295,7 @@ window alive and reconnecting instead of taking the app down mid-conversation.
 | `server/` | Python engine: capture, VAD, recognition, speaker labelling |
 | `ui/` | Browser client, for the phone or handheld route |
 | `whisperkit-service/` | Swift decode service, so Whisper reaches the Neural Engine |
+| `capture-service/` | Isolated Core Audio and ScreenCaptureKit capture with stable device identity |
 | `scripts/` | Engine setup, packaging, releasing, screenshots || `docs/HANDOVER.md` | The full state of the work: what is built, measured, parked and next |
 | `docs/MACOS-PORT.md` | The decisions, the evidence, and what is still unverified |
 | `docs/macos-mockup.html` | The approved interface, screen by screen |

@@ -21,6 +21,21 @@ private func checks() {
     }
     let a = AudioInputTarget(kind: "microphone", endpointID: "a", name: "Microphone", index: 1, followDefault: false)
     let b = AudioInputTarget(kind: "microphone", endpointID: "b", name: "Microphone", index: 2, followDefault: false)
+    let suite = "sunno-input-tests.\(UUID().uuidString)"
+    let defaults = UserDefaults(suiteName: suite)!
+    defer { defaults.removePersistentDomain(forName: suite) }
+    expect(AppSettings(defaults: defaults).inputTarget.followDefault, "fresh preferences follow the default input")
+    defaults.set(-1, forKey: "deviceIndex")
+    expect(AppSettings(defaults: defaults).inputTarget.followDefault, "the old no-device sentinel migrates to default input")
+    defaults.set("Saved microphone", forKey: "deviceName")
+    defaults.set(3, forKey: "deviceIndex")
+    let oldSettings = AppSettings(defaults: defaults)
+    expect(!oldSettings.inputTarget.followDefault, "a remembered microphone does not silently become follow-default")
+    oldSettings.rememberInput(b)
+    expect(AppSettings(defaults: defaults).inputTarget == b, "confirmed stable identity survives relaunch")
+    defaults.removePersistentDomain(forName: suite)
+    defaults.set(true, forKey: "deviceIsLoopback")
+    expect(AppSettings(defaults: defaults).inputTarget.followDefault, "old system-audio settings migrate without a microphone fallback")
     let inputs = InputSwitch()
     var sent: [BackendCommand] = []
     var committed: [AudioInputTarget] = []

@@ -9,10 +9,10 @@ ROOT = Path(__file__).resolve().parents[1]
 if sys.platform != "darwin" or shutil.which("swiftc") is None:
     print("SKIP: Swift input-state checks require a macOS Swift toolchain.")
     raise SystemExit(0)
-sources = ["Sunno/Models/InputSwitch.swift", "Sunno/Protocol/Events.swift",
+sources = ["Sunno/Models/InputSwitch.swift", "Sunno/Protocol/Events.swift", "Sunno/Services/AppSettings.swift",
            "Sunno/Models/TranscriptStore.swift", "Sunno/Models/AudioMeter.swift",
            "Sunno/Models/SessionClock.swift", "Sunno/Theme.swift",
-           "tests/swift/InputSwitch.swift"]
+           "tests/swift/InputSwitchChecks.swift"]
 sdk = subprocess.check_output(["xcrun", "--show-sdk-path"], text=True).strip()
 with tempfile.TemporaryDirectory(prefix="sunno-input-tests-") as directory:
     executable = Path(directory) / "input-switch"

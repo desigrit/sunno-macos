@@ -15,7 +15,7 @@ import AppKit
 @MainActor
 final class AppSettings: ObservableObject {
 
-    private let defaults = UserDefaults.standard
+    private let defaults: UserDefaults
 
     @Published var showClarity: Bool {
         didSet { defaults.set(showClarity, forKey: Keys.showClarity) }
@@ -46,7 +46,7 @@ final class AppSettings: ObservableObject {
     /// The index alone is not enough and the Windows build learned this the hard way
     /// (`MainWindow.xaml.cs:2491-2619`): indices are positional, so plugging in an interface
     /// renumbers everything after it and the saved index silently selects a different device.
-    /// The name is what identifies it; the index is only a hint about where to look first.
+    /// A Core Audio UID is authoritative. Old names migrate only when unambiguous.
     @Published var deviceIndex: Int? {
         didSet { defaults.set(deviceIndex ?? -1, forKey: Keys.deviceIndex) }
     }
@@ -116,7 +116,8 @@ final class AppSettings: ObservableObject {
 
     static let fontSizes: [CGFloat] = [15, 17, 20, 24, 28, 34, 40]
 
-    init() {
+    init(defaults: UserDefaults = .standard) {
+        self.defaults = defaults
         showClarity = defaults.object(forKey: Keys.showClarity) as? Bool ?? true
         forceCPU = defaults.bool(forKey: Keys.forceCPU)
         let size = defaults.double(forKey: Keys.captionFontSize)
@@ -135,7 +136,8 @@ final class AppSettings: ObservableObject {
         deviceEndpointID = defaults.string(forKey: Keys.deviceEndpointID)
         deviceFollowsDefault = defaults.object(forKey: Keys.deviceFollowsDefault) as? Bool
             ?? (defaults.string(forKey: Keys.deviceName) == "System audio (this Mac)"
-                || (defaults.object(forKey: Keys.deviceIndex) == nil
+                || defaults.bool(forKey: Keys.deviceIsLoopback)
+                || (savedIndex < 0
                     && defaults.string(forKey: Keys.deviceName) == nil))
         hasCompletedSetup = defaults.bool(forKey: Keys.hasCompletedSetup)
         hasSeenScreenCaptureExplanation =
