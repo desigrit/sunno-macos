@@ -134,7 +134,9 @@ final class AppSettings: ObservableObject {
         deviceIsLoopback = defaults.bool(forKey: Keys.deviceIsLoopback)
         deviceEndpointID = defaults.string(forKey: Keys.deviceEndpointID)
         deviceFollowsDefault = defaults.object(forKey: Keys.deviceFollowsDefault) as? Bool
-            ?? (deviceName == "System audio (this Mac)" || (deviceIndex == nil && deviceName == nil))
+            ?? (defaults.string(forKey: Keys.deviceName) == "System audio (this Mac)"
+                || (defaults.object(forKey: Keys.deviceIndex) == nil
+                    && defaults.string(forKey: Keys.deviceName) == nil))
         hasCompletedSetup = defaults.bool(forKey: Keys.hasCompletedSetup)
         hasSeenScreenCaptureExplanation =
             defaults.bool(forKey: Keys.hasSeenScreenCaptureExplanation)
