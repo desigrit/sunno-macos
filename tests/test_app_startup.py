@@ -10,6 +10,7 @@ import tempfile
 import threading
 import time
 import unittest
+from unittest.mock import patch
 
 from websockets.sync.client import connect
 
@@ -18,6 +19,16 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class DesktopStartupTests(unittest.TestCase):
+    def test_local_http_binding_never_reverse_resolves_a_hostname(self):
+        sys.path.insert(0, str(ROOT))
+        from server.app import _UiHttpServer, _UiRequestHandler
+
+        with patch("socket.getfqdn", side_effect=AssertionError("Reverse DNS can block offline startup")) as lookup:
+            with _UiHttpServer(("127.0.0.1", 0), _UiRequestHandler) as server:
+                self.assertEqual(server.server_name, "127.0.0.1")
+                self.assertGreater(server.server_port, 0)
+            lookup.assert_not_called()
+
     def test_desktop_launch_starts_and_parent_eof_stops_it(self):
         with tempfile.TemporaryDirectory(prefix="sunno-startup-test-") as directory:
             environment = dict(os.environ)
