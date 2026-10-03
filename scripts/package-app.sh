@@ -192,16 +192,6 @@ cat > "$OUT/inner.entitlements" <<'INNER'
 </dict>
 </plist>
 INNER
-# Capture runs in its own hardened process, so it needs its own microphone entitlement.
-cat > "$OUT/capture.entitlements" <<'CAPTURE'
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-  <key>com.apple.security.device.audio-input</key><true/>
-</dict>
-</plist>
-CAPTURE
 # Every Mach-O inside the bundle, before the bundle itself. Python ships hundreds of .so
 # files and an unsigned one anywhere in the tree makes the whole app fail to launch on a
 # machine that did not build it. This is the macOS equivalent of the staging discipline in
@@ -214,8 +204,9 @@ signed=0
 while IFS= read -r macho; do
   case "$macho" in
     */capture-service)
+      # Capture runs in its own hardened process; entitlements do not inherit.
       codesign --force --sign "$IDENTITY" --options runtime \
-        --entitlements "$OUT/capture.entitlements" --timestamp=none "$macho"
+        --entitlements "$ROOT/capture-service/Entitlements.plist" --timestamp=none "$macho"
       ;;
     # Anything that loads native extensions is a loader and needs the exception. Everything
     # else only needs a valid signature.

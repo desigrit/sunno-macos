@@ -38,7 +38,8 @@ opens a new route. No zero-gap or faster-decoding claim is made.
 ## Automated checks on macOS
 
 The GitHub workflow compiles the complete SwiftUI app and the release capture
-service for Apple Silicon. It tests native Core Audio metadata, metadata-only
+service for Apple Silicon, then verifies hardened signing and the packaged helper
+path with the helper's own microphone entitlement. It tests native Core Audio metadata, metadata-only
 paused selection, and real AVAudioConverter transitions between 48 kHz, 44.1 kHz
 and 96 kHz stereo sources. Synthetic samples stay in memory.
 

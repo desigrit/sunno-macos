@@ -16,6 +16,7 @@ jobs:
     env:
       PYTHONDONTWRITEBYTECODE: '1'
       SUNNO_WINDOWS_REPO: ${{ github.workspace }}/windows-reference
+      SUNNO_CAPTURE_HELPER: ${{ github.workspace }}/build/engine/capture-service/.build/release/capture-service
     steps:
       - uses: actions/checkout@v4
       - uses: actions/checkout@v4
@@ -35,6 +36,14 @@ jobs:
           swiftc -swift-version 5 -sdk "$(xcrun --show-sdk-path)" \
             -target arm64-apple-macos13.3 -module-name Sunno \
             $(find Sunno -name '*.swift' | sort) -o build/Sunno
+      - name: Verify packaged capture helper and hardened signing
+        run: |
+          mkdir -p "$(dirname "$SUNNO_CAPTURE_HELPER")"
+          cp capture-service/.build/release/capture-service "$SUNNO_CAPTURE_HELPER"
+          codesign --force --sign - --options runtime \
+            --entitlements capture-service/Entitlements.plist --timestamp=none "$SUNNO_CAPTURE_HELPER"
+          codesign --verify --strict "$SUNNO_CAPTURE_HELPER"
+          bash -n scripts/package-app.sh scripts/setup-engine.sh
       - name: Native format and metadata checks
         run: python tests/test_native_capture_service.py
       - name: Capture supervisor and control integration
