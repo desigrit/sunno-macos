@@ -37,7 +37,10 @@ class DesktopStartupTests(unittest.TestCase):
                 http_port = http_socket.getsockname()[1]
                 ws_port = ws_socket.getsockname()[1]
             process = subprocess.Popen(
-                [sys.executable, "-m", "server.app", "--engine", "ct2", "--model", "small",
+                [sys.executable, "-c",
+                 "import faulthandler, runpy; faulthandler.dump_traceback_later(15); "
+                 "runpy.run_module('server.app', run_name='__main__')",
+                 "--engine", "ct2", "--model", "small",
                  "--start-stopped", "--no-speakers", "--compute-device", "cpu",
                  "--http-port", str(http_port), "--ws-port", str(ws_port),
                  "--recordings-path", str(Path(directory) / "recordings")],
