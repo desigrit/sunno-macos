@@ -39,6 +39,10 @@ def collect() -> list[dict]:
     Mirrors what the /devices.json handler builds in-process, including the sort, so that a
     refreshed list and a startup list differ only in how recently they were read.
     """
+    if sys.platform == "darwin":
+        from .mac_audio import list_endpoints
+        return list_endpoints()
+
     from .audio import list_input_devices
 
     # list_input_devices prints a diagnostic count line, and stdout here belongs to the JSON

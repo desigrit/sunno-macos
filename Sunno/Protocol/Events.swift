@@ -1,5 +1,19 @@
 import Foundation
 
+struct AudioInputTarget: Codable, Equatable {
+    var kind: String
+    var endpointID: String?
+    var name: String?
+    var index: Int?
+    var followDefault: Bool
+
+    enum CodingKeys: String, CodingKey {
+        case kind, name, index
+        case endpointID = "endpoint_id"
+        case followDefault = "follow_default"
+    }
+}
+
 /// Everything the backend can put on the socket.
 ///
 /// Deliberately one struct with optional fields rather than an enum with associated values.
@@ -17,6 +31,7 @@ struct BackendEvent: Decodable {
     /// The discriminator. `unknown` exists so a newer backend cannot break an older client.
     enum Kind: String, Decodable {
         case status
+        case input
         case partial
         case final
         case discard
@@ -47,6 +62,13 @@ struct BackendEvent: Decodable {
     let state: String?
     let running: Bool?
     let device: String?
+    let wanted: Bool?
+
+    // input selection and capture recovery
+    let requestID: String?
+    let target: AudioInputTarget?
+    let active: AudioInputTarget?
+    let committed: Bool?
 
     // partial / final / discard / speech_start
     let id: Int?
@@ -108,7 +130,8 @@ struct BackendEvent: Decodable {
 
     enum CodingKeys: String, CodingKey {
         case kind = "type"
-        case state, running, device, id, text
+        case state, running, device, id, text, wanted, target, active, committed
+        case requestID = "request_id"
         case speakerId = "speaker_id"
         case speaker, clarity
         case latencyMs = "latency_ms"
@@ -172,6 +195,8 @@ enum BackendCommand {
     case start
     case stop
     case toggle
+    case setInput(AudioInputTarget, requestID: String)
+    case devicesChanged
     case listModels
     case downloadModel(String)
     case renameSpeaker(id: Int, name: String)
@@ -190,6 +215,12 @@ enum BackendCommand {
             return ["cmd": "stop"]
         case .toggle:
             return ["cmd": "toggle"]
+        case .setInput(let target, let requestID):
+            guard let data = try? JSONEncoder().encode(target),
+                  let wire = try? JSONSerialization.jsonObject(with: data) else { return [:] }
+            return ["cmd": "set_input", "target": wire, "request_id": requestID]
+        case .devicesChanged:
+            return ["cmd": "devices_changed"]
         case .listModels:
             return ["cmd": "list_models"]
         case .downloadModel(let model):

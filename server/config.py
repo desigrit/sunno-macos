@@ -96,6 +96,10 @@ class Settings:
 
     # --- Input device ---
     input_device: int | str | None = None
+    input_kind: str | None = None
+    input_endpoint_id: str | None = None
+    input_device_name: str | None = None
+    follow_default_input: bool = False
     # A WASAPI loopback endpoint index. When set it replaces the microphone, so what is
     # played through that output gets captioned instead of what is spoken.
     loopback_device: int | None = None

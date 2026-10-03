@@ -1,5 +1,7 @@
 import SwiftUI
 import AppKit
+import AVFoundation
+import CoreGraphics
 
 @main
 struct SunnoApp: App {
@@ -10,7 +12,8 @@ struct SunnoApp: App {
     @StateObject private var devices = DeviceCatalog()
     @StateObject private var chrome = WindowChrome()
     @StateObject private var backend = BackendHost()
-    @StateObject private var systemAudio = SystemAudioCapture()
+    @StateObject private var inputs = InputSwitch()
+    @StateObject private var audioWatcher = AudioDeviceWatcher()
     @StateObject private var recording = RecordingController()
     @StateObject private var models = ModelSwitch()
 
@@ -24,7 +27,7 @@ struct SunnoApp: App {
                 backend: backend,
                 recording: recording,
                 models: models,
-                onCommand: { client.send($0) },
+                onCommand: sendCommand,
                 onSelectDevice: select,
                 onToggleRecording: toggleRecording,
                 onSelectModel: selectModel,
@@ -40,7 +43,7 @@ struct SunnoApp: App {
             SettingsWindow(
                 settings: settings,
                 store: store,
-                onCommand: { client.send($0) },
+                onCommand: sendCommand,
                 diagnostics: diagnosticsReport
             )
         }
@@ -89,244 +92,136 @@ struct SunnoApp: App {
     // MARK: - Wiring
 
     private func startUp() {
-        // Once per launch, whatever SwiftUI does with the view. `onAppear` fires again whenever
-        // the hierarchy is rebuilt, and this method replaces the engine: running it twice tore
-        // down a model that was still loading and started another, so the window never reached
-        // "listening" and no caption ever arrived. It looked like captions were broken.
         guard backend.claimStartUp() else { return }
-
         devices.configure(httpPort: backend.httpPort)
-
-        // The switcher owns the decision; the app owns the engine and the preference file.
+        devices.select(settings.inputTarget)
         models.restart = { model in restartOnModel(model) }
         models.commit = { model in settings.selectedModel = model }
         models.notify = { message, severity in
             store.reportProblem(message, code: nil, severity: severity)
         }
-        // The one string the app knows to be sensitive, so an engine error that names the
-        // capture device cannot put it in a report.
-        EngineDiagnostics.shared.redactDeviceName(settings.deviceName)
-        recording.onFailure = { message in
-            store.reportProblem(message, code: nil, severity: .warning)
+        inputs.send = { client.send($0) }
+        inputs.commit = { target in
+            settings.rememberInput(target)
+            devices.select(target)
+            EngineDiagnostics.shared.redactDeviceName(target.name)
         }
-        // An engine that dies while a switch is in flight is the switch's failure to handle
-        // first. Only if it declines does the banner report it as a plain crash.
+        recording.onFailure = { store.reportProblem($0, code: nil, severity: .warning) }
         backend.onFailure = {
             if models.engineFailed() { return true }
             recording.reset()
             return false
         }
-
+        client.onConnected = { inputs.reconnected() }
         client.onEvent = { event in
+            guard inputs.apply(event) else { return }
             store.apply(event)
             recording.apply(event)
             applyModelSwitch(event)
-            // The catalogue is only pushed unprompted when a model is missing. Ask for it
-            // once the engine is up so the sidebar picker has something to show.
-            if event.kind == .status, event.state == "listening" {
+            if event.kind == .input, inputs.pending == nil, let target = event.target {
+                devices.select(target)
+            }
+            if event.kind == .status, event.model != nil,
+               event.state == "listening" || event.state == "stopped" {
                 client.send(.listModels)
-                // The engine is up, so its device list is answerable now. The refresh at
-                // launch can land before its HTTP server is listening, and reconciling
-                // against an empty list reported a perfectly good microphone as missing.
                 if devices.claimReconcile() {
                     Task {
-                        await devices.refresh()
-                        reconcileSavedDevice()
+                        await devices.refresh(fresh: true)
+                        devices.select(inputs.pending ?? settings.inputTarget)
                     }
                 }
             }
         }
-
-        // Start on the source that was last chosen, and start on it once. Bringing the engine
-        // up on the microphone and swapping to system audio afterwards costs a model load that
-        // is thrown away, which is half a minute of empty window for nothing.
-        guard settings.deviceName == DeviceCatalog.systemAudio.name else {
-            store.beginEngineSession()
-            backend.start(model: settings.selectedModel,
-                          device: settings.deviceIsLoopback ? nil : settings.deviceIndex,
-                          loopbackDevice: settings.deviceIsLoopback ? settings.deviceIndex : nil,
-                          forceCPU: settings.forceCPU,
-                          recordingsPath: settings.recordingsPath,
-                          resumeRecording: recording.activeFolder)
-            client.connect(port: backend.wsPort)
-            Task { await devices.refresh() }
-            return
+        audioWatcher.changed = {
+            client.send(.devicesChanged)
+            inputs.reconnected()
+            refreshDevices()
         }
-
+        // Release capture before sleep without forgetting the user's running/paused intent.
+        audioWatcher.sleeping = { inputs.suspend() }
+        audioWatcher.waking = { inputs.resume() }
+        audioWatcher.start()
         Task {
-            devices.select(DeviceCatalog.systemAudio)
-            if await startOnSystemAudio() == false {
-                // Fall back rather than sit there with no engine at all. A permission that was
-                // never granted should cost the feature that needs it, not the whole app: an
-                // accessibility tool that captions nothing because one capture path was refused
-                // has failed at the only thing it is for. The banner still says what happened.
-                devices.select(DeviceCatalog.systemAudio)
-                startOnMicrophone()
-            }
+            let permitted = await ensurePermission(for: settings.inputTarget)
+            inputs.setRunning(permitted)
+            startEngine(startStopped: !permitted)
             client.connect(port: backend.wsPort)
             await devices.refresh()
         }
     }
 
-    /// The default input, with whatever device the settings remember.
-    ///
-    /// `model` overrides the saved preference, which is how a switch reaches the engine
-    /// before the preference has been committed to it.
-    private func startOnMicrophone(model: String? = nil) {
+    private func startEngine(model: String? = nil, startStopped: Bool? = nil) {
         store.beginEngineSession()
-        backend.start(model: model ?? settings.selectedModel,
-                      device: settings.deviceIsLoopback ? nil : settings.deviceIndex,
-                      loopbackDevice: settings.deviceIsLoopback ? settings.deviceIndex : nil,
-                      forceCPU: settings.forceCPU,
-                      recordingsPath: settings.recordingsPath,
-                      resumeRecording: recording.activeFolder)
+        backend.start(model: model ?? settings.selectedModel, device: nil, loopbackDevice: nil,
+                      forceCPU: settings.forceCPU, recordingsPath: settings.recordingsPath,
+                      resumeRecording: recording.activeFolder, input: settings.inputTarget,
+                      startStopped: startStopped ?? !inputs.wanted)
     }
 
-    /// The saved device may have moved. Correct the setting and restart on the right one rather
-    /// than captioning whatever now happens to sit at the old index.
-    ///
-    /// When it has gone altogether, say so. A microphone that disappears produces silence,
-    /// and silence is indistinguishable from a quiet room — which is the one failure this app
-    /// cannot afford to leave unexplained.
-    private func reconcileSavedDevice() {
-        guard let wanted = settings.deviceName else { return }
-
-        // An empty catalogue means the engine has not answered yet, not that every microphone
-        // has gone. At startup the refresh can land before the engine's HTTP server is up,
-        // and announcing from that produced "MacBook Pro Microphone is not available" over a
-        // session that was captioning from it perfectly well. A banner that cries wolf is
-        // worse than no banner: this one has to be believed the day it says the microphone
-        // really has gone.
-        guard !devices.inputs.isEmpty || !devices.outputs.isEmpty else { return }
-
-        guard let found = devices.resolve(index: settings.deviceIndex,
-                                          name: wanted,
-                                          isLoopback: settings.deviceIsLoopback)
-        else {
-            announceMissingDevice(wanted)
-            return
-        }
-
-        devices.select(found)
-        guard found.index != settings.deviceIndex else { return }
-        settings.deviceIndex = found.index
-        restartCapture(on: found)
-    }
-
-    /// Re-enumerate, then check the remembered device is still there.
     private func refreshDevices() {
         Task {
             await devices.refresh(fresh: true)
-            reconcileSavedDevice()
+            devices.select(inputs.pending ?? settings.inputTarget)
+            client.send(.devicesChanged)
         }
     }
 
-    /// Three sentences, because the right thing to do next differs in each case.
-    ///
-    /// After a manual refresh the engine is already holding an open stream on a real device,
-    /// so nothing is broken and the app must not restart capture to chase an index — that
-    /// would stop captions mid-conversation to fix something that is not wrong. It only
-    /// offers the choice.
-    private func announceMissingDevice(_ wanted: String) {
-        if devices.lastRefreshWasStale {
-            store.note("\(wanted) is not available. Choose a device below if you want to "
-                       + "switch.")
-            return
+    private func sendCommand(_ command: BackendCommand) {
+        switch command {
+        case .start:
+            resumeCapture()
+        case .stop:
+            _ = inputs.nextIntent()
+            inputs.setRunning(false)
+        case .toggle:
+            if inputs.wanted {
+                _ = inputs.nextIntent()
+                inputs.setRunning(false)
+            } else { resumeCapture() }
+        default:
+            client.send(command)
         }
-        if let alternative = devices.selected ?? devices.inputs.first(where: { $0.isDefault })
-                             ?? devices.inputs.first {
-            store.note("\(wanted) is not available, so Sunno is using \(alternative.name) "
-                       + "instead.")
-        } else {
-            store.note("\(wanted) is not available. Choose a microphone below to start "
-                       + "captioning.")
+    }
+
+    private func resumeCapture() {
+        let intent = inputs.nextIntent()
+        Task {
+            let permitted = await ensurePermission(for: inputs.pending ?? settings.inputTarget)
+            if permitted, inputs.isCurrent(intent) {
+                inputs.setRunning(true)
+            }
         }
     }
 
     private func select(_ device: DeviceCatalog.Device) {
-        devices.select(device)
-        settings.deviceIndex = device.index
-        settings.deviceName = device.name
-        settings.deviceIsLoopback = device.isLoopback
-        EngineDiagnostics.shared.redactDeviceName(device.name)
-        restartCapture(on: device)
-    }
-
-    /// Changing the capture source restarts the engine, which is why this is not a command on
-    /// the socket: the backend takes its device from the command line and holds it open for
-    /// the life of the process.
-    private func restartCapture(on device: DeviceCatalog.Device) {
-        guard device.isSystemAudio else {
-            systemAudio.stop()
-            backend.stop()
-            store.beginEngineSession()
-            backend.start(model: settings.selectedModel,
-                          device: device.isLoopback ? nil : device.index,
-                          loopbackDevice: device.isLoopback ? device.index : nil,
-                          forceCPU: settings.forceCPU,
-                          recordingsPath: settings.recordingsPath,
-                          resumeRecording: recording.activeFolder)
-            return
-        }
+        let target = device.target
+        let intent = inputs.nextIntent()
+        // Capture is replaced in place. Recognition, speakers, transcript and recording stay.
         Task {
-            if await startOnSystemAudio() == false, backend.status != .running {
-                // Whenever the attempt left nothing running, which includes an engine that
-                // failed to spawn as well as one that was never started. A refusal that
-                // happened before the old engine was stopped has already left a working one
-                // in place, and that case is the reason this is a check rather than an else.
-                startOnMicrophone()
+            let permitted = inputs.wanted ? await ensurePermission(for: target) : true
+            if permitted, inputs.isCurrent(intent) {
+                inputs.request(target)
+                devices.select(device)
             }
         }
     }
 
-    /// Bring the capture up first, then hand the engine the port it serves on. The engine is
-    /// stopped only once there is something for its replacement to connect to, so a refused
-    /// permission leaves the working engine alone rather than killing it for nothing.
-    @discardableResult
-    private func startOnSystemAudio(model: String? = nil) async -> Bool {
-        guard await confirmScreenCapturePermission() else { return false }
-        do {
-            let port = try await systemAudio.start()
-            backend.stop()
-            store.beginEngineSession()
-        backend.start(model: model ?? settings.selectedModel,
-                          device: nil, loopbackDevice: nil, pcmPort: port,
-                          forceCPU: settings.forceCPU,
-                          recordingsPath: settings.recordingsPath,
-                          resumeRecording: recording.activeFolder)
-
-            // `start` reports failure by setting a status rather than by throwing, so success
-            // has to be read back. Returning true regardless left the capture running, the
-            // recording indicator lit and PCM going to a socket nobody was reading, while the
-            // caller believed system audio was working and never fell back.
-            guard backend.status == .running else {
-                systemAudio.stop()
+    private func ensurePermission(for target: AudioInputTarget) async -> Bool {
+        if target.kind == "loopback" {
+            guard await confirmScreenCapturePermission() else { return false }
+            guard CGPreflightScreenCaptureAccess() else {
+                _ = CGRequestScreenCaptureAccess()
+                store.reportProblem("Allow Sunno in Privacy & Security > Screen & System Audio Recording, then reopen it.",
+                                    code: "screen_denied")
                 return false
             }
             return true
-        } catch SystemAudioCapture.CaptureError.notPermitted {
-            systemAudio.stop()
-            // Named exactly, and with the relaunch, because this permission never prompts.
-            // macOS returns a denial and quietly adds the app to the list instead, so somebody
-            // waiting for a dialog waits forever. Verified in the TCC log: "Service
-            // kTCCServiceScreenCapture does not allow prompting; returning denied."
-            store.reportProblem(
-                "Sunno needs permission to capture system audio. Open Privacy & Security, "
-                + "then Screen & System Audio Recording, switch Sunno on, and reopen it. "
-                + "macOS will not ask on its own. Listening to the microphone meanwhile.",
-                code: "screen_denied")
-            return false
-        } catch {
-            systemAudio.stop()
-            // Anything else, said plainly. Permission has already been ruled out above, so
-            // repeating the Settings advice here would send somebody to a switch that is
-            // already on.
-            store.reportProblem(
-                "System audio could not be captured. \(error.localizedDescription) "
-                + "Listening to the microphone meanwhile.",
-                code: nil)
-            return false
         }
+        let status = AVCaptureDevice.authorizationStatus(for: .audio)
+        if status == .authorized { return true }
+        if status == .notDetermined, await AVCaptureDevice.requestAccess(for: .audio) { return true }
+        store.reportProblem("Allow Sunno in Privacy & Security > Microphone, then try again.", code: "mic_denied")
+        return false
     }
 
     /// The app explains before the system asks, which is the whole remedy for the wrong noun.
@@ -364,7 +259,7 @@ struct SunnoApp: App {
         case .status:
             // The engine names its model on every status frame. "listening" is the first one
             // that proves it loaded rather than merely started loading it.
-            if event.state == "listening", let model = event.model {
+            if (event.state == "listening" || event.state == "stopped"), let model = event.model {
                 models.engineReady(model: model)
             }
         case .downloadComplete:
@@ -389,18 +284,8 @@ struct SunnoApp: App {
     /// Restart the engine onto a model. The engine reads its model once at startup, so this
     /// is the only way a switch takes effect.
     private func restartOnModel(_ model: String) {
-        let device = devices.selected
-        systemAudio.stop()
         backend.stop()
-        if let device, device.isSystemAudio {
-            Task {
-                if await startOnSystemAudio(model: model) == false {
-                    startOnMicrophone(model: model)
-                }
-            }
-            return
-        }
-        startOnMicrophone(model: model)
+        startEngine(model: model)
     }
 
     /// Start or stop recording.    ///

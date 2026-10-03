@@ -63,6 +63,7 @@ final class BackendHost: ObservableObject {
     }
 
     private var process: Process?
+    private var parentPipe: Pipe?
     private var signalSources: [DispatchSourceSignal] = []
 
     /// The child's pid, kept where a termination handler can read it without hopping to the
@@ -138,7 +139,8 @@ final class BackendHost: ObservableObject {
 
     func start(model: String?, device: Int?, loopbackDevice: Int?, pcmPort: UInt16? = nil,
                forceCPU: Bool, recordingsPath: String? = nil,
-               resumeRecording: String? = nil) {
+               resumeRecording: String? = nil, input: AudioInputTarget? = nil,
+               startStopped: Bool = false) {
         guard process == nil else { return }
 
         // Attach to an engine somebody else started, rather than starting one.
@@ -175,6 +177,13 @@ final class BackendHost: ObservableObject {
                          "--http-port", String(httpPort),
                          "--ws-port", String(wsPort)]
         if let model { arguments.append(contentsOf: ["--model", model]) }
+        if let input {
+            arguments.append(contentsOf: ["--input-kind", input.kind])
+            if let uid = input.endpointID { arguments.append(contentsOf: ["--endpoint-id", uid]) }
+            if let name = input.name { arguments.append(contentsOf: ["--device-name", name]) }
+            if input.followDefault { arguments.append("--follow-default") }
+        }
+        if startStopped { arguments.append("--start-stopped") }
         if let device { arguments.append(contentsOf: ["--device", String(device)]) }
         if let loopbackDevice {
             arguments.append(contentsOf: ["--loopback-device", String(loopbackDevice)])
@@ -203,10 +212,14 @@ final class BackendHost: ObservableObject {
         task.executableURL = python
         task.arguments = arguments
         task.currentDirectoryURL = root
+        let parentPipe = Pipe()
+        self.parentPipe = parentPipe
+        task.standardInput = parentPipe
 
         var environment = ProcessInfo.processInfo.environment
         environment["PYTHONUTF8"] = "1"
         environment["PYTHONUNBUFFERED"] = "1"
+        environment["SUNNO_WATCH_PARENT"] = "1"
         // Keep compiled bytecode out of the app bundle.
         //
         // Python writes `__pycache__` beside every module it imports, and in a shipped build
@@ -292,6 +305,8 @@ final class BackendHost: ObservableObject {
             return
         }
         process = nil
+        try? parentPipe?.fileHandleForWriting.close()
+        parentPipe = nil
         task.terminate()
 
         // Bounded, and short. The replacement engine binds the same two ports, and SIGTERM is
@@ -302,6 +317,7 @@ final class BackendHost: ObservableObject {
         while task.isRunning, Date() < deadline {
             usleep(10_000)
         }
+        if task.isRunning { kill(task.processIdentifier, SIGKILL) }
 
         Self.forgetChild()
         status = .notStarted

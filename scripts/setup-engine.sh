@@ -37,6 +37,8 @@ echo "==> fetching the speaker embedding model"
 ./scripts/fetch-speaker-model.sh
 
 echo "==> building the WhisperKit service"
+echo "==> building the isolated audio service"
+(cd capture-service && swift build -c release)
 # Optional, and the engine still runs without it: CTranslate2 decodes on the processor and is
 # the fallback. But on Apple Silicon that leaves the GPU and the Neural Engine idle, and the
 # same speech decodes three to five times faster through Core ML, so this is built by default.

@@ -1,51 +1,37 @@
 import Foundation
+import Combine
 
-/// The list of things that can be captured, fetched from the backend's own HTTP endpoint.
-///
-/// Deliberately not enumerated natively, for now. The backend already serves `/devices.json`,
-/// already narrows the list to devices that are actually present, and already marks the
-/// system default. Reimplementing that in Swift would mean two enumerations that can disagree
-/// about which microphone is which, and the index the user picks is passed straight back to
-/// the backend, so the two must agree by construction rather than by care.
-///
-/// It becomes native when the engine does. At that point this type keeps its shape and
-/// changes its source, which is why the view talks to this rather than to a URL.
+/// Stable Core Audio UIDs, with a bounded fresh-list probe on the backend.
 @MainActor
 final class DeviceCatalog: ObservableObject {
-
     struct Device: Identifiable, Equatable {
         let index: Int
         let name: String
         let isLoopback: Bool
         let isDefault: Bool
-        /// Captured by the app with ScreenCaptureKit rather than opened by the engine as a
-        /// device, because macOS keeps system audio behind a permission rather than in the
-        /// device list. Everything else about it behaves like any other choice in the picker.
-        var isSystemAudio: Bool = false
-
-        var id: String { isSystemAudio ? "system" : "\(isLoopback ? "out" : "in")-\(index)" }
+        var endpointID: String?
+        var followsDefault = false
+        var isSystemAudio = false
+        var id: String { followsDefault ? "default-input" : endpointID ?? "\(isLoopback ? "out" : "in")-\(index)" }
+        var target: AudioInputTarget {
+            AudioInputTarget(kind: isLoopback ? "loopback" : "microphone",
+                             endpointID: endpointID, name: followsDefault ? nil : name,
+                             index: followsDefault ? nil : index, followDefault: followsDefault || isSystemAudio)
+        }
     }
 
-    /// The one system-audio source macOS offers. Present regardless of what the engine
-    /// enumerates, because the engine cannot see it: `loopback.py` is WASAPI and there is no
-    /// equivalent here, so without this entry the picker's "System audio" section is a heading
-    /// with nothing under it on every Mac.
+    static let defaultInput = Device(index: -1, name: "macOS default (Input)",
+        isLoopback: false, isDefault: true, followsDefault: true)
     static let systemAudio = Device(index: -1, name: "System audio (this Mac)",
-                                    isLoopback: true, isDefault: false, isSystemAudio: true)
+        isLoopback: true, isDefault: true, endpointID: "system-audio", isSystemAudio: true)
 
     @Published private(set) var inputs: [Device] = []
-    /// Output endpoints, so what is being played can be captioned too. Kept apart from the
-    /// microphones rather than mixed into one flat list: they are very different things and a
-    /// picker that blends them invites capturing the wrong one silently.
-    @Published private(set) var outputs: [Device] = []
+    @Published private(set) var outputs: [Device] = [systemAudio]
     @Published private(set) var selected: Device?
     @Published private(set) var selectedName: String?
     @Published private(set) var lastRefreshWasStale = false
-
-    /// Whether the saved device has been checked against a real list yet.
-    ///
-    /// Claimed once, because the check is worth doing when the engine first answers and is
-    /// noise on every status frame after that.
+    private var httpPort = 8765
+    private var refreshGeneration = 0
     private var reconciled = false
 
     func claimReconcile() -> Bool {
@@ -54,83 +40,80 @@ final class DeviceCatalog: ObservableObject {
         return true
     }
 
-    private var httpPort: Int = 8765
-
-    func configure(httpPort: Int) {
-        self.httpPort = httpPort
-    }
+    func configure(httpPort: Int) { self.httpPort = httpPort }
 
     func select(_ device: Device) {
         selected = device
         selectedName = device.name
     }
 
-    /// Find a remembered device again after the list has been re-enumerated.
-    ///
-    /// By name first and index only as a fallback, which is the order that matters. Indices are
-    /// positional, so an interface plugged in since the last launch renumbers everything after
-    /// it; trusting the index would silently caption a different device, and on this app that
-    /// can mean captioning a room instead of a hearing aid.
-    func resolve(index: Int?, name: String?, isLoopback: Bool) -> Device? {
-        if name == Self.systemAudio.name { return Self.systemAudio }
-        let pool = isLoopback ? outputs : inputs
-        if let name, let byName = pool.first(where: { $0.name == name }) { return byName }
-        if let index, let byIndex = pool.first(where: { $0.index == index }) { return byIndex }
-        return nil
+    func select(_ target: AudioInputTarget) {
+        if target.kind == "loopback" { select(Self.systemAudio); return }
+        if target.followDefault { select(Self.defaultInput); return }
+        if let found = inputs.first(where: { $0.endpointID == target.endpointID && target.endpointID != nil }) {
+            select(found)
+        } else {
+            selected = nil
+            selectedName = target.name ?? "Selected input unavailable"
+        }
     }
 
-    /// `fresh` re-enumerates in a child process on the backend side. Without it the backend
-    /// serves what the audio layer cached at startup, which is right at startup and wrong
-    /// every time afterwards.
+    func resolve(index: Int?, name: String?, isLoopback: Bool) -> Device? {
+        if name == Self.systemAudio.name { return Self.systemAudio }
+        let matches = (isLoopback ? outputs : inputs).filter { $0.name == name }
+        // A remembered name that is missing or ambiguous never falls back to an unrelated index.
+        return matches.count == 1 ? matches.first : nil
+    }
+
+    func displayName(_ device: Device) -> String {
+        let peers = inputs.filter { $0.name == device.name }
+        guard peers.count > 1, let ordinal = peers.firstIndex(of: device) else { return device.name }
+        return "\(device.name) (\(ordinal + 1))"
+    }
+
     func refresh(fresh: Bool = false) async {
+        refreshGeneration += 1
+        let generation = refreshGeneration
         var components = URLComponents()
         components.scheme = "http"
         components.host = "127.0.0.1"
         components.port = httpPort
         components.path = "/devices.json"
-        if fresh {
-            components.queryItems = [URLQueryItem(name: "fresh", value: "1")]
-        }
+        if fresh { components.queryItems = [URLQueryItem(name: "fresh", value: "1")] }
         guard let url = components.url else { return }
-
         do {
-            let (data, _) = try await URLSession.shared.data(from: url)
+            var request = URLRequest(url: url)
+            request.timeoutInterval = 5
+            let (data, response) = try await URLSession.shared.data(for: request)
+            guard generation == refreshGeneration, (response as? HTTPURLResponse)?.statusCode == 200 else { return }
             let payload = try JSONDecoder().decode(Payload.self, from: data)
-
-            inputs = payload.devices
-                .filter { !($0.loopback ?? false) }
-                .map { Device(index: $0.index, name: $0.name,
-                              isLoopback: false, isDefault: $0.isDefaultInput ?? false) }
-            outputs = payload.devices
-                .filter { $0.loopback ?? false }
-                .map { Device(index: $0.index, name: $0.name,
-                              isLoopback: true, isDefault: $0.isDefaultOutput ?? false) }
-                + [Self.systemAudio]
+            inputs = payload.devices.filter { !($0.loopback ?? false) }.map {
+                Device(index: $0.index, name: $0.name, isLoopback: false,
+                       isDefault: $0.isDefaultInput ?? false, endpointID: $0.endpointID)
+            }
+            // ScreenCaptureKit captions the Mac as a whole, not a particular output device.
+            outputs = [Self.systemAudio]
             lastRefreshWasStale = payload.stale ?? false
         } catch {
-            // A picker that fails to refresh should keep showing what it had. An empty list
-            // is worse than a slightly stale one, because it offers no way to choose at all.
-            // System audio is never dropped: it does not come from the engine, so an engine
-            // that is not answering says nothing about whether it is available.
-            if outputs.isEmpty { outputs = [Self.systemAudio] }
+            if generation == refreshGeneration { lastRefreshWasStale = true }
         }
     }
 
     private struct Payload: Decodable {
         let devices: [Entry]
         let stale: Bool?
-
         struct Entry: Decodable {
             let index: Int
             let name: String
             let loopback: Bool?
             let isDefaultInput: Bool?
             let isDefaultOutput: Bool?
-
+            let endpointID: String?
             enum CodingKeys: String, CodingKey {
                 case index, name, loopback
                 case isDefaultInput = "is_default_input"
                 case isDefaultOutput = "is_default_output"
+                case endpointID = "endpoint_id"
             }
         }
     }

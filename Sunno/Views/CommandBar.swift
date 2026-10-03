@@ -71,11 +71,12 @@ struct CommandBar: View {
 
     private var devicePicker: some View {
         Menu {
+            Button(DeviceCatalog.defaultInput.name) { onSelectDevice(DeviceCatalog.defaultInput) }
             if devices.inputs.isEmpty {
                 Text("No microphones found")
             }
             ForEach(devices.inputs) { device in
-                Button(device.name) { onSelectDevice(device) }
+                Button(devices.displayName(device)) { onSelectDevice(device) }
             }
             if !devices.outputs.isEmpty {
                 Divider()
@@ -86,7 +87,7 @@ struct CommandBar: View {
                 }
             }
         } label: {
-            Text(devices.selectedName ?? "Default microphone")
+            Text(devices.selectedName ?? "macOS default (Input)")
                 .lineLimit(1)
                 .truncationMode(.middle)
         }
@@ -103,7 +104,7 @@ struct CommandBar: View {
     /// released either way, and the status line keeps saying so.
     private var transport: some View {
         Button(action: onToggle) {
-            Image(systemName: store.isRunning ? "pause.fill" : "play.fill")
+            Image(systemName: store.wantedRunning ? "pause.fill" : "play.fill")
                 .font(.system(size: 15, weight: .medium))
                 .frame(width: 44, height: 44)
         }
@@ -111,8 +112,8 @@ struct CommandBar: View {
         .background(Circle().fill(Color.accentColor))
         .foregroundStyle(.white)
         .keyboardShortcut(.space, modifiers: [])
-        .help(store.isRunning ? "Pause transcribing (Space)" : "Resume transcribing (Space)")
-        .accessibilityLabel(store.isRunning ? "Pause transcribing" : "Resume transcribing")
+        .help(store.wantedRunning ? "Pause transcribing (Space)" : "Resume transcribing (Space)")
+        .accessibilityLabel(store.wantedRunning ? "Pause transcribing" : "Resume transcribing")
     }
 
     /// The status corner is a recording indicator rather than a status bar, so while capture
@@ -133,6 +134,9 @@ struct CommandBar: View {
             guard store.isRunning else { return "Paused" }
             return clock.isStalled ? "No audio" : clock.display
         case "stopped":   return "Paused"
+        case "opening":   return "Switching input"
+        case "recovering": return "Reconnecting input"
+        case "failed":    return "Input unavailable"
         default:          return store.state
         }
     }

@@ -1,0 +1,54 @@
+name: macOS audio recovery
+
+on:
+  push:
+    branches: [main, 'codex/**']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  native-macos:
+    runs-on: macos-15
+    timeout-minutes: 20
+    env:
+      PYTHONDONTWRITEBYTECODE: '1'
+      SUNNO_WINDOWS_REPO: ${{ github.workspace }}/windows-reference
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: desigrit/sunno
+          path: windows-reference
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install test dependencies
+        run: python -m pip install numpy soxr sounddevice websockets onnxruntime sherpa-onnx huggingface_hub
+      - name: Build isolated native capture service
+        run: swift build -c release --package-path capture-service
+      - name: Compile the complete native app
+        run: |
+          mkdir -p build
+          swiftc -swift-version 5 -sdk "$(xcrun --show-sdk-path)" \
+            -target arm64-apple-macos13.3 -module-name Sunno \
+            $(find Sunno -name '*.swift' | sort) -o build/Sunno
+      - name: Native format and metadata checks
+        run: python tests/test_native_capture_service.py
+      - name: Capture supervisor and control integration
+        run: python tests/test_capture_recovery.py
+      - name: Swift input, model, recording and transcript checks
+        run: |
+          python tests/test_input_switch.py
+          python tests/test_state_machines.py
+          python tests/test_transcript_order.py
+      - name: Protocol, theme and recording checks
+        run: |
+          python tests/test_protocol_contract.py
+          python tests/test_swift_protocol.py
+          python tests/test_theme_parity.py
+          python tests/test_recording.py
+      - name: Browser recovery checks
+        run: node tests/test_browser_recovery.js

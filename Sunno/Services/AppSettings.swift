@@ -64,6 +64,28 @@ final class AppSettings: ObservableObject {
         didSet { defaults.set(deviceIsLoopback, forKey: Keys.deviceIsLoopback) }
     }
 
+    @Published var deviceEndpointID: String? {
+        didSet { defaults.set(deviceEndpointID, forKey: Keys.deviceEndpointID) }
+    }
+
+    @Published var deviceFollowsDefault: Bool {
+        didSet { defaults.set(deviceFollowsDefault, forKey: Keys.deviceFollowsDefault) }
+    }
+
+    var inputTarget: AudioInputTarget {
+        AudioInputTarget(kind: deviceIsLoopback ? "loopback" : "microphone",
+                         endpointID: deviceEndpointID, name: deviceName,
+                         index: deviceIndex, followDefault: deviceFollowsDefault)
+    }
+
+    func rememberInput(_ target: AudioInputTarget) {
+        deviceIsLoopback = target.kind == "loopback"
+        deviceEndpointID = target.endpointID
+        deviceFollowsDefault = target.followDefault
+        deviceName = target.name
+        deviceIndex = target.followDefault ? nil : target.index
+    }
+
     /// Whether the user has ever finished setup on this machine. Absent means a genuine first
     /// run, which is what lets the app open straight onto the model picker instead of showing
     /// a window it cannot use yet.
@@ -110,6 +132,9 @@ final class AppSettings: ObservableObject {
         deviceIndex = savedIndex >= 0 ? savedIndex : nil
         deviceName = defaults.string(forKey: Keys.deviceName)
         deviceIsLoopback = defaults.bool(forKey: Keys.deviceIsLoopback)
+        deviceEndpointID = defaults.string(forKey: Keys.deviceEndpointID)
+        deviceFollowsDefault = defaults.object(forKey: Keys.deviceFollowsDefault) as? Bool
+            ?? (deviceName == "System audio (this Mac)" || (deviceIndex == nil && deviceName == nil))
         hasCompletedSetup = defaults.bool(forKey: Keys.hasCompletedSetup)
         hasSeenScreenCaptureExplanation =
             defaults.bool(forKey: Keys.hasSeenScreenCaptureExplanation)
@@ -148,6 +173,8 @@ final class AppSettings: ObservableObject {
         static let deviceIndex = "deviceIndex"
         static let deviceName = "deviceName"
         static let deviceIsLoopback = "deviceIsLoopback"
+        static let deviceEndpointID = "deviceEndpointID"
+        static let deviceFollowsDefault = "deviceFollowsDefault"
         static let hasCompletedSetup = "hasCompletedSetup"
         static let hasSeenScreenCaptureExplanation = "hasSeenScreenCaptureExplanation"
         static let recordingsPath = "recordingsPath"

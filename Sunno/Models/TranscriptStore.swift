@@ -85,6 +85,8 @@ final class TranscriptStore: ObservableObject {
 
     @Published private(set) var state: String = "starting"
     @Published private(set) var isRunning: Bool = false
+    @Published private(set) var wantedRunning: Bool = false
+    private var inputOwnsProblem = false
     @Published private(set) var activeModel: String?
     /// The audio device name, held for display only. Deliberately never written to a log or
     /// into the diagnostics export: "Headset (R-Phonak hearing aid)" is health information
@@ -146,6 +148,7 @@ final class TranscriptStore: ObservableObject {
     /// cannot report that system audio was refused, because on macOS it never touches it.
     func reportProblem(_ message: String, code: String?,
                        severity: Problem.Severity = .warning) {
+        inputOwnsProblem = false
         problem = Problem(message: message, code: code, severity: severity)
     }
 
@@ -156,12 +159,14 @@ final class TranscriptStore: ObservableObject {
     /// `listening` frame would vanish within a second of appearing, which is how the Windows
     /// build learned to make these survive status updates.
     func note(_ message: String) {
+        inputOwnsProblem = false
         problem = Problem(message: message, code: nil, severity: .info)
     }
 
     /// Clear whatever the banner is showing. The user has dealt with it, or it stopped being
     /// true.
     func dismissProblem() {
+        inputOwnsProblem = false
         problem = nil
     }
 
@@ -194,13 +199,14 @@ final class TranscriptStore: ObservableObject {
         case .status:
             state = event.state ?? state
             if let running = event.running { isRunning = running }
+            wantedRunning = event.wanted ?? event.running ?? wantedRunning
             if let model = event.model { activeModel = model }
             if let device = event.device { deviceName = device }
             // Captions starting clears a fault, because the fault is evidently over. A notice
             // is not a fault and must survive: "your microphone changed" arrives moments
             // before the engine reports listening on the replacement, so clearing on that
             // frame would delete the explanation a fraction of a second after showing it.
-            if event.state == "listening", problem?.severity != .info { problem = nil }
+            if event.state == "listening", !inputOwnsProblem, problem?.severity != .info { problem = nil }
 
             // The clock follows capture, not the socket. Losing the connection does not stop
             // the microphone, and the count measures the conversation rather than any one
@@ -211,6 +217,20 @@ final class TranscriptStore: ObservableObject {
                 clock.pause()
                 meter.silence()
             }
+
+        case .input:
+            if let running = event.running { isRunning = running }
+            if let wanted = event.wanted { wantedRunning = wanted }
+            if event.state == "ready" || event.state == "selected" {
+                if inputOwnsProblem { problem = nil; inputOwnsProblem = false }
+            } else if let message = event.message {
+                inputOwnsProblem = true
+                let code = event.code == "capture_denied"
+                    ? (event.target?.kind == "loopback" ? "screen_denied" : "mic_denied") : event.code
+                problem = Problem(message: message, code: code,
+                    severity: event.state == "opening" || event.state == "recovering" || isRunning ? .info : .warning)
+            }
+            if !isRunning { clock.pause(); meter.silence() }
 
         case .partial, .final:
             upsert(event)
