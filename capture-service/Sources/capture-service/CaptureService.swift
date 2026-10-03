@@ -156,7 +156,8 @@ private func resolve(_ request: Target) throws -> Target {
     return target
 }
 
-private final class Frames {
+// Mutable state is confined to queue. The self-test uses an unshared, private instance.
+private final class Frames: @unchecked Sendable {
     let target: Target
     private var converter: AVAudioConverter?
     private var inputFormat: AVAudioFormat?
@@ -294,7 +295,7 @@ private final class Microphone {
                                          &uid, UInt32(MemoryLayout<CFString>.size)))
         for _ in 0..<3 {
             var buffer: AudioQueueBufferRef?
-            let bytes = UInt32(max(512, Int(rate * .016))) * format.mBytesPerFrame
+            let bytes = UInt32(max(512, Int(rate * 0.016))) * format.mBytesPerFrame
             try checked(AudioQueueAllocateBuffer(audioQueue, bytes, &buffer))
             if let buffer { try checked(AudioQueueEnqueueBuffer(audioQueue, buffer, 0, nil)) }
         }
@@ -346,7 +347,8 @@ private final class SystemAudio: NSObject, SCStreamOutput, SCStreamDelegate {
         // A static desktop may produce no screen or audio callbacks. An acknowledged
         // framework operation distinguishes healthy silence from a wedged capture.
         try await stream.updateConfiguration(configuration)
-        frames.queue.async { self.frames.heartbeat() }
+        let frames = self.frames
+        frames.queue.async { frames.heartbeat() }
     }
 
     func stream(_ stream: SCStream, didStopWithError error: Error) {
@@ -400,11 +402,11 @@ private enum Main {
                 for rate in [48_000.0, 44_100.0, 96_000.0] {
                     let format = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: rate,
                                               channels: 2, interleaved: false)!
-                    let count = AVAudioFrameCount(rate * .12)
+                    let count = AVAudioFrameCount(rate * 0.12)
                     let pcm = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: count)!
                     pcm.frameLength = count
                     for channel in 0..<2 {
-                        pcm.floatChannelData![channel].initialize(repeating: .25, count: Int(count))
+                        pcm.floatChannelData![channel].initialize(repeating: 0.25, count: Int(count))
                     }
                     let before = frames.emittedFrames
                     try frames.push(pcm)
@@ -422,8 +424,12 @@ private enum Main {
                   let json = CommandLine.arguments[1].data(using: .utf8) else {
                 throw Failure(code: "capture_protocol", message: "An input selection is required.", retryable: false)
             }
+            // Install before Core Audio resolution, which can itself get stuck in a driver.
+            // An unowned CLI metadata probe has no parent pipe and never opens capture.
+            if !CommandLine.arguments.contains("--probe") || CommandLine.arguments.contains("--owned") {
+                watchParent()
+            }
             let target = try resolve(JSONDecoder().decode(Target.self, from: json))
-            watchParent()
             if CommandLine.arguments.contains("--probe") {
                 send(["type": "ready", "target": target.wire, "probe": true])
                 return

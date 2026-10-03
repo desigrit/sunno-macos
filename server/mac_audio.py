@@ -43,9 +43,7 @@ def default_endpoint_id(kind):
     if kind == "loopback":
         # ScreenCaptureKit captures this Mac's app audio, not a pinned output endpoint.
         return "system-audio"
-    try:
-        devices = list_endpoints()
-        return next((d["endpoint_id"] for d in devices if d.get("is_default_input")), None)
-    except CaptureError:
-        # A failed metadata probe must not be confused with a changed default.
-        return None
+    # Let the supervisor retain its healthy route when metadata probing fails.
+    # Returning None for a failed query would falsely suggest the default changed.
+    devices = list_endpoints()
+    return next((d["endpoint_id"] for d in devices if d.get("is_default_input")), None)
