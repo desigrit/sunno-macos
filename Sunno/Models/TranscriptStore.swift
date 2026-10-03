@@ -225,8 +225,11 @@ final class TranscriptStore: ObservableObject {
                 if inputOwnsProblem { problem = nil; inputOwnsProblem = false }
             } else if let message = event.message {
                 inputOwnsProblem = true
-                let code = event.code == "capture_denied"
-                    ? (event.target?.kind == "loopback" ? "screen_denied" : "mic_denied") : event.code
+                // A rollback target names the healthy old source, not the denied candidate.
+                // Do not offer that source's permission settings for a failed switch.
+                let code: String? = event.state == "failed" && isRunning ? nil
+                    : event.code == "capture_denied"
+                        ? (event.target?.kind == "loopback" ? "screen_denied" : "mic_denied") : event.code
                 problem = Problem(message: message, code: code,
                     severity: event.state == "opening" || event.state == "recovering" || isRunning ? .info : .warning)
             }

@@ -95,5 +95,10 @@ private func checks() {
     expect(store.problem?.severity == .info, "automatic recovery is informational, not a fatal error")
     store.apply(event(["type": "input", "state": "ready", "wanted": true, "running": true]))
     expect(store.problem == nil && store.lines.count == 1, "healthy capture clears only the recovery notice")
+    store.apply(event(["type": "input", "state": "failed", "wanted": true, "running": true,
+                       "committed": true, "target": targetWire(a), "code": "capture_denied",
+                       "message": "The previous input is still running."]))
+    expect(store.isRunning && store.problem?.code == nil && store.lines.count == 1,
+           "a denied candidate cannot offer permission settings for the healthy rollback source")
     print("\(count) Swift input checks passed.")
 }
