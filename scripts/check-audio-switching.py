@@ -10,6 +10,7 @@ import argparse
 import asyncio
 from collections import Counter
 import json
+import os
 from pathlib import Path
 import sys
 import time
@@ -17,8 +18,14 @@ import time
 import websockets
 
 
+def engine_identity_path() -> Path:
+    override = os.environ.get("Sunno_DATA_DIR")
+    profile = Path(override) if override else Path.home() / "Library/Application Support/Sunno"
+    return profile / "engine.pid"
+
+
 async def observe(seconds: int, port: int) -> int:
-    identity_file = Path.home() / "Library/Application Support/Sunno/engine.pid"
+    identity_file = engine_identity_path()
     identity = identity_file.read_bytes() if identity_file.is_file() else None
     deadline = time.monotonic() + seconds
     states: Counter[str] = Counter()
@@ -96,6 +103,9 @@ async def observe(seconds: int, port: int) -> int:
     if not connection_seen:
         print("FAIL: Sunno's local control socket was not available. Open Sunno first.")
         return 1
+    if identity is None:
+        print("INCONCLUSIVE: no engine ownership record was available. Check Sunno_DATA_DIR and repeat.")
+        return 2
     if engine_changed:
         print("FAIL: the speech-engine process changed. Repeat without switching speech models or quitting Sunno.")
         return 1
