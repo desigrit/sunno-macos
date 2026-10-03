@@ -19,9 +19,9 @@ struct SpeakerEditor: View {
         case cancel
     }
 
-    @State private var name: String = ""
-    @State private var isSelf: Bool = false
-    @State private var mergeTarget: Int?
+    @ViewState private var name: String = ""
+    @ViewState private var isSelf: Bool = false
+    @ViewState private var mergeTarget: Int?
 
     private var candidates: [SpeakerRow] {
         others.filter { $0.id != speaker.id }

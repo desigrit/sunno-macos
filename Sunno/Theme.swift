@@ -1,6 +1,10 @@
 import SwiftUI
 import AppKit
 
+// New SDKs also export a State macro whose plugin is absent from Command Line Tools.
+// A type alias keeps these properties on SwiftUI's established property wrapper.
+typealias ViewState<Value> = SwiftUI.State<Value>
+
 /// The palette, carried over from `app/App.xaml` unchanged.
 ///
 /// Two rules from the Windows build survive the port intact, and both are decisions rather

@@ -16,9 +16,9 @@ struct MainView: View {
     let onSelectModel: (String) -> Void
     let onRefreshDevices: () -> Void
 
-    @State private var renaming: SpeakerRow?
+    @ViewState private var renaming: SpeakerRow?
     /// A named speaker waiting on confirmation before being forgotten.
-    @State private var deleting: SpeakerRow?
+    @ViewState private var deleting: SpeakerRow?
 
     /// The engine's own failures, shown in the same banner as the ones it reports over the
     /// socket. `BackendHost` writes careful sentences for a missing submodule, an absent venv
