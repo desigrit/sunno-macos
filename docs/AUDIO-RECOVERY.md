@@ -66,6 +66,12 @@ Build and sign with a stable identity using `scripts/package-app.sh`, launch the
 resulting app, grant its microphone and screen/system-audio permissions, and wait
 for the speech model to be ready. Do not switch models during these checks.
 
+For a disposable test copy, use a separate bundle identifier and set the launched
+app's `Sunno_DATA_DIR` environment variable to an absolute test-profile directory.
+Both backend data and the engine ownership record use that directory. The normal
+profile location is unchanged when no override is set. Model weights may be copied
+into the test profile, but do not copy personal speaker profiles or recordings.
+
 This optional observer reads the already-running app's local control socket. It
 sends no commands, changes no preferences, and saves no audio, captions or device
 names. It reports route changes, recovery times and whether the speech engine was

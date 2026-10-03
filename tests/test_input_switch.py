@@ -10,6 +10,7 @@ if sys.platform != "darwin" or shutil.which("swiftc") is None:
     print("SKIP: Swift input-state checks require a macOS Swift toolchain.")
     raise SystemExit(0)
 sources = ["Sunno/Models/InputSwitch.swift", "Sunno/Protocol/Events.swift", "Sunno/Services/AppSettings.swift",
+           "Sunno/Services/BackendProfile.swift",
            "Sunno/Models/TranscriptStore.swift", "Sunno/Models/AudioMeter.swift",
            "Sunno/Models/SessionClock.swift", "Sunno/Theme.swift",
            "tests/swift/InputSwitchChecks.swift"]

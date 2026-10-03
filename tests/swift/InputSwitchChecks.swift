@@ -21,6 +21,16 @@ private func checks() {
     }
     let a = AudioInputTarget(kind: "microphone", endpointID: "a", name: "Microphone", index: 1, followDefault: false)
     let b = AudioInputTarget(kind: "microphone", endpointID: "b", name: "Microphone", index: 2, followDefault: false)
+    let testHome = URL(fileURLWithPath: "/tmp/sunno-profile-check", isDirectory: true)
+    expect(BackendProfile.directory(environment: [:], home: testHome).path
+           == "/tmp/sunno-profile-check/Library/Application Support/Sunno",
+           "ordinary launches keep the existing macOS profile")
+    expect(BackendProfile.directory(environment: ["Sunno_DATA_DIR": "/tmp/sunno-disposable-profile"], home: testHome).path
+           == "/tmp/sunno-disposable-profile",
+           "a test profile override also isolates the backend ownership record")
+    expect(BackendProfile.directory(environment: ["Sunno_DATA_DIR": ""], home: testHome).path
+           == "/tmp/sunno-profile-check/Library/Application Support/Sunno",
+           "an empty test profile override retains normal behavior")
     let suite = "sunno-input-tests.\(UUID().uuidString)"
     let defaults = UserDefaults(suiteName: suite)!
     defer { defaults.removePersistentDomain(forName: suite) }
