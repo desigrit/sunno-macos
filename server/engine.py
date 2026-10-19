@@ -4,10 +4,9 @@ Two engines exist because CTranslate2 - fast, accurate, and what the app was bui
 no win_arm64 wheel and will not build there. A Snapdragon laptop cannot run it at all, so ARM
 needs a second implementation over ONNX Runtime rather than a slower configuration of the first.
 
-The seam is deliberately narrow. The pipeline only ever asks an engine to decode audio twice
-per utterance - once fast, once well - and to warm itself up. Everything else about how a model
-is loaded, prompted, or quantised stays inside the implementation, which is why a second one is
-a new file rather than a set of branches through the existing code.
+Snapshot engines decode provisional and final utterances. Incremental engines optionally
+provide stream/reset_stream instead; the worker supplies immutable audio deltas and stable
+utterance identities. An optional corrector runs final-only on its own bounded worker.
 """
 
 from __future__ import annotations
@@ -107,6 +106,10 @@ def resolve_engine(preference: str = "auto", model_id: str | None = None) -> str
     """
     have = available_engines()
 
+    from .asr_apple import is_apple_model
+    if model_id and is_apple_model(model_id):
+        return "apple"
+
     if model_id is not None:
         from .models import is_stream_model
 
@@ -145,6 +148,9 @@ def resolve_engine(preference: str = "auto", model_id: str | None = None) -> str
 def create_engine(settings: "Settings", preference: str = "auto") -> SpeechEngine:
     """Build the engine this machine can run."""
     kind = resolve_engine(preference, getattr(settings, "model_size", None))
+    if kind == "apple":
+        from .asr_apple import AppleSpeechEngine
+        return AppleSpeechEngine(settings)
     if kind == "stream":
         from .asr_stream import StreamingEngine
 

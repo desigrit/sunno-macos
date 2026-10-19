@@ -110,6 +110,18 @@ func check() {
         failures.append("a rename reached back into a frozen line")
     }
 
+    fresh.apply(decode("{\"type\":\"correction\",\"id\":1,\"text\":\"Corrected words\",\"speaker_id\":99}"))
+    if fresh.lines.count != 2 || fresh.lines[1].text != "Corrected words" || fresh.lines[1].speakerId != 1 {
+        failures.append("correction duplicated a line or replaced its current speaker")
+    }
+    fresh.apply(decode("{\"type\":\"partial\",\"id\":1,\"text\":\"stale\"}"))
+    if fresh.lines[1].text != "Corrected words" || !fresh.lines[1].isFinal {
+        failures.append("late partial undid a correction")
+    }
+    fresh.clear()
+    fresh.apply(decode("{\"type\":\"correction\",\"id\":1,\"text\":\"resurrected\"}"))
+    if !fresh.lines.isEmpty { failures.append("late correction resurrected cleared history") }
+
     print()
     if failures.isEmpty {
         print("ALL PASS")

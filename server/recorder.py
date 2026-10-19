@@ -132,6 +132,7 @@ class Recorder:
         self._pcm = (self.folder / PCM_NAME).open("ab")
         self._jsonl = (self.folder / JSONL_NAME).open("a", encoding="utf-8")
         self._lines = _count_lines(self.folder)
+        self._caption_keys = set()
 
     def _read_started_at(self) -> float:
         try:
@@ -165,20 +166,31 @@ class Recorder:
         """Record a finished caption. Written immediately, not held for the end."""
         if self._closed:
             return
+        key = (f"{event['started_at']:.6f}:{event['id']}"
+               if event.get("started_at") and event.get("id") is not None else None)
+        correction = event.get("type") == "correction"
+        # A correction for a caption from before Record was pressed belongs only on screen.
+        if correction and (key is None or key not in self._caption_keys):
+            return
         # Clamped at zero. A line is emitted when decoding finishes but carries the time the
         # utterance *began*, so a sentence already under way when record was pressed reports
         # a start before the recording existed. Left alone that renders as "[-1:57]", which
         # reads as a broken file rather than as a sentence that straddled the button.
         at = max(0.0, event.get("started_at", 0.0) - self.started_at)
-        self._jsonl.write(json.dumps({
+        line = {
             "at": round(at, 2),
             "speaker": event.get("speaker"),
             "speaker_id": event.get("speaker_id"),
             "text": event.get("text", ""),
             "words": event.get("words") or [],
-        }, ensure_ascii=False) + "\n")
+        }
+        if key is not None:
+            line["_caption_key"] = key
+            self._caption_keys.add(key)
+        self._jsonl.write(json.dumps(line, ensure_ascii=False) + "\n")
         self._jsonl.flush()
-        self._lines += 1
+        if not correction:
+            self._lines += 1
 
     def detach(self) -> None:
         """Let go of the files without finalising, so another process can take over.
@@ -202,6 +214,7 @@ class Recorder:
 
 def _read_lines(folder: Path) -> list[dict]:
     out: list[dict] = []
+    positions = {}
     path = folder / JSONL_NAME
     if not path.exists():
         return out
@@ -210,7 +223,14 @@ def _read_lines(folder: Path) -> list[dict]:
         if not raw:
             continue
         try:
-            out.append(json.loads(raw))
+            line = json.loads(raw)
+            key = line.pop("_caption_key", None)
+            if key is not None and key in positions:
+                out[positions[key]] = line
+            else:
+                if key is not None:
+                    positions[key] = len(out)
+                out.append(line)
         except ValueError:
             # A line torn in half by a kill. Everything before it is still good, and
             # discarding just the fragment is the whole reason for appending line by line.

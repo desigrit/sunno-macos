@@ -12,9 +12,10 @@ struct SidebarView: View {
     let pendingModel: String?
     let onRefreshModels: () -> Void
 
-    @ViewState private var modelSectionOpen = false
+    @ViewState var modelSectionOpen = false
     @ViewState private var pendingDownload: BackendEvent.CatalogEntry?
     @ViewState private var listHeight: CGFloat = 0
+    @ViewState private var sidebarHeight: CGFloat = 500
 
     var body: some View {
         VStack(spacing: 0) {
@@ -23,6 +24,10 @@ struct SidebarView: View {
             modelSection
         }
         .frame(minWidth: 200, idealWidth: 232, maxWidth: 300)
+        .background(GeometryReader { proxy in
+            Color.clear.onAppear { sidebarHeight = proxy.size.height }
+                .onChange(of: proxy.size.height) { sidebarHeight = $0 }
+        })
     }
 
     private var speakerList: some View {
@@ -63,8 +68,7 @@ struct SidebarView: View {
     /// height of a container that clips, and this is the same thing in SwiftUI: the rows are
     /// always laid out at their natural size, and the frame around them opens from zero.
     ///
-    /// No scrolling. The section takes the height it needs and the speaker list above gives up
-    /// the space, which is what a panel this short should do with seven rows.
+    /// The longer catalogue scrolls within three quarters of the sidebar.
     private var modelSection: some View {
         VStack(spacing: 0) {
             header
@@ -102,7 +106,8 @@ struct SidebarView: View {
                     Text("Speech model")
                         .font(.system(size: 12, weight: .semibold))
                         .foregroundStyle(.secondary)
-                    Text(store.activeModel ?? "not loaded")
+                    Text(store.catalog.first(where: { $0.id == store.activeModel })?.name
+                         ?? store.activeModel ?? "not loaded")
                         .font(.system(size: 11))
                         .foregroundStyle(.tertiary)
                         .lineLimit(1)
@@ -123,6 +128,7 @@ struct SidebarView: View {
     }
 
     private var list: some View {
+        ScrollView {
         VStack(alignment: .leading, spacing: 10) {
             ForEach(store.catalog) { entry in
                 modelRow(entry)
@@ -140,7 +146,9 @@ struct SidebarView: View {
             }
         )
         .onPreferenceChange(ListHeightKey.self) { listHeight = $0 }
-        .frame(height: modelSectionOpen ? listHeight : 0, alignment: .top)
+        }
+        .frame(height: modelSectionOpen ? min(listHeight, max(0, sidebarHeight * 0.75 - CommandBar.height)) : 0,
+               alignment: .top)
         .clipped()
         .allowsHitTesting(modelSectionOpen)
         .accessibilityHidden(!modelSectionOpen)
@@ -156,6 +164,12 @@ struct SidebarView: View {
 
     private var downloadPrompt: String {
         guard let entry = pendingDownload else { return "" }
+        if entry.id == "apple-speech" {
+            return "macOS may download its English speech model. Transcription stays on this Mac."
+        }
+        if entry.id == "apple-speech-whisper" {
+            return "Sets up Apple's English model and downloads Whisper large-v3 if needed (about 3 GB). Live captions appear first, then Whisper can correct them."
+        }
         return "\(sizeLabel(entry)) to download. \(entry.detail)"
     }
 
@@ -242,6 +256,7 @@ struct SidebarView: View {
     private func downloadPercent(_ id: String) -> Double? {
         guard let download = store.download, download.model == id, download.failed == nil
         else { return nil }
+        if id.hasPrefix("apple-speech") && download.percent == 0 { return nil }
         return download.percent
     }
 
@@ -273,6 +288,7 @@ struct SidebarView: View {
     /// Binary megabytes and a trimmed decimal, matching `ModelRow.FormatSize` exactly: 3090 MB
     /// reads as "3 GB" here and on Windows, not "3.1 GB".
     private func sizeLabel(_ entry: BackendEvent.CatalogEntry) -> String {
+        if entry.approxMb == 0 { return "Set up" }
         guard entry.approxMb >= 1024 else { return "\(entry.approxMb) MB" }
         let gb = Double(entry.approxMb) / 1024
         let trimmed = (gb * 10).rounded() / 10

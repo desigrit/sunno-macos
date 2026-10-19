@@ -88,6 +88,11 @@ class Settings:
     partial_interval_ms: int = 450
     # Don't attempt a partial until there's enough audio to be meaningful.
     min_partial_ms: int = 700
+    adaptive_timing: bool = True
+    streaming_partial_ms: int = 160
+    max_partial_interval_ms: int = 1500
+    correction_queue_limit: int = 2
+    correction_max_age_s: float = 12.0
 
     # --- Network ---
     host: str = "127.0.0.1"

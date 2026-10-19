@@ -12,18 +12,9 @@ this adds a model and no new native dependency. sherpa-onnx also publishes nativ
 win_arm64 wheels, which CTranslate2 does not, so this is the first engine that can run
 everywhere without emulation.
 
-**Used statelessly, on purpose.** sherpa-onnx can hold state across chunks and emit words
-while someone is still speaking, which is a better design for captions than waiting for a
-sentence to end. This engine deliberately does not do that yet. The pipeline hands an
-engine the whole utterance so far on every partial, and ``AudioConditioner`` renormalises
-gain over everything it is given, so the prefix of a partial is not the same audio it was
-last time: measured, one loud word changed already-decoded samples by 67 percent. Feeding
-tails into a recogniser holding state would splice two different gains together, quietly,
-with nothing to catch it. So each call builds a fresh stream over the whole utterance,
-exactly as the CTranslate2 and ONNX engines already do. That is correct, and it is still
-several times faster than what it replaces. True streaming needs the pipeline to hand out
-deltas and to say which utterance they belong to, which is a change to a seam every engine
-shares and is not this file's to make.
+The live pipeline uses ``stream`` with persistent state per utterance and only new audio.
+StreamingAudioConditioner makes those samples immutable. Stateless partial/final methods
+remain for file-based tools and compatibility, not for the live caption path.
 
 Two things this cannot report, both accepted deliberately: ``clarity``, the per-utterance
 confidence badge, and per-word uncertainty. A transducer exposes no comparable score, and
@@ -63,6 +54,34 @@ class StreamingEngine:
             provider="cpu",
             decoding_method="greedy_search",
         )
+        self.reset_stream()
+
+    def reset_stream(self) -> None:
+        self._stream = None
+        self._stream_id = None
+        self._samples = 0
+
+    def stream(self, utterance_id: int, audio: np.ndarray, is_final: bool) -> Transcript:
+        """Accept only new, immutably conditioned samples for this utterance."""
+        started = time.perf_counter()
+        if self._stream is None or self._stream_id != utterance_id:
+            self._stream = self._recognizer.create_stream()
+            self._stream_id = utterance_id
+            self._samples = 0
+        self._stream.accept_waveform(SAMPLE_RATE, audio)
+        self._samples += len(audio)
+        if is_final:
+            # Flush the transducer's right context without counting padding as speech.
+            self._stream.accept_waveform(SAMPLE_RATE, np.zeros(int(.3 * SAMPLE_RATE), np.float32))
+            self._stream.input_finished()
+        while self._recognizer.is_ready(self._stream):
+            self._recognizer.decode_stream(self._stream)
+        text = self._readable(self._recognizer.get_result(self._stream).strip())
+        result = Transcript(text, self._samples / SAMPLE_RATE,
+                            (time.perf_counter() - started) * 1000, is_final)
+        if is_final:
+            self.reset_stream()
+        return result
 
     # --- context -------------------------------------------------------
     # A transducer takes no prompt, so previous text cannot bias it and a custom vocabulary
@@ -117,17 +136,8 @@ class StreamingEngine:
         "lazy dog we". Neither lower-casing nor passing text through unchanged can do that,
         because neither looks beyond the character in front of it.
 
-        That is a claim about this function, not about the captions. The transducer itself
-        revises as more audio arrives, and on real two-speaker audio it does so often: over
-        testdata/ at the pipeline's own 700 ms and 450 ms cadence, stream-en changed a
-        prefix already displayed on 147 of 251 refreshes and Kroko on 44 of the same 251,
-        measured by bench/bench_stream_churn.py so the figures can be re-run rather than
-        believed. An earlier version of this note cited "0 of 31" as though that were a
-        property of the engine; it was a property of one clean synthesized clip and it does
-        not survive real speech. The cause is structural rather than fixable here: the
-        pipeline re-decodes the whole utterance on every partial, so the model is free to
-        reach a different answer each time. Handing out deltas with a committed prefix is
-        what would stop it, which is the same pipeline change described above.
+        Streaming state reduces repeated computation, not uncertainty: the recognizer can
+        still revise its provisional output as more context arrives.
         """
         return text if self._cased else text.lower()
 

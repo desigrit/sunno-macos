@@ -51,6 +51,8 @@ jobs:
           python tests/test_app_startup.py
           python tests/test_capture_recovery.py
           python tests/test_audio_switching_observer.py
+      - name: Incremental recognition and background correction checks
+        run: python tests/test_incremental_asr.py
       - name: Swift input, model, recording and transcript checks
         run: |
           python tests/test_input_switch.py

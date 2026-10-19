@@ -235,7 +235,7 @@ final class TranscriptStore: ObservableObject {
             }
             if !isRunning { clock.pause(); meter.silence() }
 
-        case .partial, .final:
+        case .partial, .final, .correction:
             upsert(event)
 
         case .discard:
@@ -307,7 +307,7 @@ final class TranscriptStore: ObservableObject {
             // A capture problem is a warning: captions have stopped but the app has not.
             // Anything the engine could not name is an error, because an unrecognised
             // failure is the one most likely to mean nothing is working.
-            let known = ["mic_denied", "mic_unavailable", "capture_failed", "screen_denied"]
+            let known = ["mic_denied", "mic_unavailable", "capture_failed", "screen_denied", "correction_failed"]
             problem = Problem(message: event.message ?? "Something went wrong.",
                               code: event.code,
                               severity: known.contains(event.code ?? "") ? .warning : .error)
@@ -337,12 +337,19 @@ final class TranscriptStore: ObservableObject {
         if let index = lines.firstIndex(where: {
             $0.generation == generation && $0.utteranceId == id
         }) {
+            // An in-flight provisional must never undo a final or corrected sentence.
+            if event.kind == .partial && lines[index].isFinal { return }
+            if event.kind == .correction, let time = event.startedAt,
+               let original = lines[index].startedAt,
+               abs(original.timeIntervalSince1970 - time) > 0.001 { return }
             lines[index].text = event.text ?? lines[index].text
-            lines[index].isFinal = (event.kind == .final)
+            lines[index].isFinal = (event.kind != .partial)
             lines[index].clarity = event.clarity
             lines[index].words = words
-            if let speakerId = event.speakerId { lines[index].speakerId = speakerId }
+            if event.kind != .correction, let speakerId = event.speakerId { lines[index].speakerId = speakerId }
         } else {
+            // A late correction cannot resurrect cleared history or cross engine sessions.
+            if event.kind == .correction { return }
             lines.append(CaptionLine(
                 utteranceId: id,
                 generation: generation,

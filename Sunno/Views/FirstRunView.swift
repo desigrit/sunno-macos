@@ -115,7 +115,7 @@ struct FirstRunView: View {
                     HStack(spacing: 8) {
                         Text(entry.name).font(.system(size: 13, weight: .semibold))
                         if entry.available {
-                            Text("Downloaded")
+                            Text("Ready")
                                 .font(.system(size: 10, weight: .semibold))
                                 .foregroundStyle(Theme.ink)
                                 .padding(.horizontal, 6)
@@ -131,7 +131,7 @@ struct FirstRunView: View {
                     // in a description.
                     Text("\(entry.detail) \(entry.lagText)")
                         .font(.system(size: 11.5))
-                        .foregroundStyle(entry.responsive ? Color.secondary : Color.orange)
+                        .foregroundStyle(entry.responsive || entry.lagMs == 0 ? Color.secondary : Color.orange)
                         .fixedSize(horizontal: false, vertical: true)
                 }
 
@@ -151,7 +151,8 @@ struct FirstRunView: View {
     }
 
     private func sizeLabel(_ entry: BackendEvent.CatalogEntry) -> String {
-        entry.approxMb >= 1000
+        if entry.approxMb == 0 { return "System model" }
+        return entry.approxMb >= 1000
             ? String(format: "%.1f GB", Double(entry.approxMb) / 1000)
             : "\(entry.approxMb) MB"
     }
@@ -172,10 +173,15 @@ struct FirstRunView: View {
                         .font(.system(size: 12))
                         .foregroundStyle(.red)
                 } else {
+                    if download.model.hasPrefix("apple-speech") && download.percent == 0 {
+                        ProgressView("Preparing speech models…")
+                            .controlSize(.small)
+                    } else {
                     ProgressView(value: download.percent, total: 100)
                     Text("Downloading \(download.model), \(Int(download.percent))%")
                         .font(.system(size: 11.5))
                         .foregroundStyle(.secondary)
+                    }
                 }
             }
 

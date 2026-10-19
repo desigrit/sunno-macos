@@ -138,6 +138,8 @@ function commitFinal(id, msg) {
   if (!line.parentNode) els.captions.appendChild(line);
 
   renderLine(line, msg, true);
+  line.dataset.utterance = String(id);
+  line.dataset.startedAt = String(msg.started_at);
   line.classList.add('recent');
   setTimeout(() => line.classList.remove('recent'), 300);
 
@@ -202,6 +204,19 @@ function handle(msg) {
       commitFinal(msg.id, msg);
       els.latency.textContent = `${Math.round(msg.latency_ms)} ms final`;
       break;
+    case 'correction': {
+      // Match both identity and audio time so a restarted engine cannot revise old history.
+      const line = Array.from(els.captions.children).find(el =>
+        el.dataset.utterance === String(msg.id) && el.dataset.startedAt === String(msg.started_at));
+      if (line) {
+        const follow = atBottom();
+        // Only revise words: speaker names/identity may have changed since recognition.
+        const text = line.querySelector('.text');
+        if (text && msg.text) text.textContent = msg.text;
+        scrollIfFollowing(follow);
+      }
+      break;
+    }
     case 'roster':
       roster.clear();
       (msg.speakers || []).forEach((s) =>

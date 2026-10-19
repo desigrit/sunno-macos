@@ -57,6 +57,12 @@ SERVER = ROOT / "server"
 # only once there is a model and a device, and `error` carries `code` and `detail` only when
 # the failure is one the UI can offer a fix for.
 SCHEMA: dict[str, dict] = {
+    "correction": {
+        "fields": ["id", "text", "speaker_id", "speaker", "clarity", "latency_ms",
+                   "duration_s", "started_at", "words"],
+        "optional": ["speaker_id", "speaker", "clarity"],
+        "note": "Optional replacement of an existing final. Never creates a new line.",
+    },
     "input": {
         "fields": ["state", "request_id", "target", "active", "wanted", "running",
                    "committed", "message", "code", "kind", "endpoint_id", "name", "index", "follow_default"],
@@ -330,6 +336,10 @@ def emitted_types() -> dict[str, set[str]]:
         names = set(literal.findall(text))
         for a, b in conditional.findall(text):
             names.update((a, b))
+        # Shared caption serializer: read its literal call-site kinds as well as dicts.
+        if path.name == "pipeline.py":
+            for call in re.findall(r'self\._emit_result\([^\n]+\)', text):
+                names.update(re.findall(r'"([a-z_]+)"', call))
         for name in names:
             found.setdefault(name, set()).add(path.name)
     return found

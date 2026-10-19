@@ -34,6 +34,7 @@ struct BackendEvent: Decodable {
         case input
         case partial
         case final
+        case correction
         case discard
         case speechStart = "speech_start"
         case level

@@ -105,6 +105,34 @@ Compact mode keeps the captions on top of whatever you are doing, and nothing el
 
 ## Building
 
+### Streaming comparison build (0.3.0)
+
+The speech-model picker now offers two additional choices on macOS 26 or later:
+
+- **Apple Speech**: on-device English streaming with provisional and final captions.
+  macOS installs its English model when you select this option. Availability is checked on
+  the device; if setup fails, choose a Whisper model or retry setup.
+- **Apple Speech + Whisper**: the same live captions, followed by optional large-v3 corrections
+  in place. It needs both models and uses more memory and power. Corrections never block the
+  live recognition worker. At most two corrections wait in the queue; corrections more than
+  12 seconds old are skipped, leaving the native caption intact.
+
+Existing Whisper choices remain available for comparison and existing preferences are kept.
+Zipformer and Kroko now maintain recognition state across updates. All engines receive
+causally conditioned audio, so earlier samples are not changed by later words. Whisper still
+re-decodes an utterance snapshot; it is not a stateful streaming model.
+
+Update cadence adapts to measured decode time. Streaming starts with a 160 ms cadence;
+snapshot engines start at 450 ms, backing off under load up to 1.5 seconds. These are scheduling
+intervals, **not measured caption delays**. The existing silence endpoint remains 520 ms.
+Use `--fixed-timing` when testing a fixed cadence from the command line.
+
+The build needs a macOS 26+ SDK for the Apple Speech helper. The app and existing Whisper
+engines retain the macOS 13.3 runtime minimum. Native speech uses no cloud fallback. Apple
+manages its model assets and may update them independently of Sunno.
+
+Validation and comparison instructions: [streaming checks](docs/STREAMING.md).
+
 ```bash
 git clone https://github.com/desigrit/sunno-macos.git
 cd sunno-macos

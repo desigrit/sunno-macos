@@ -96,3 +96,42 @@ class AudioConditioner:
 
         np.clip(out, -1.0, 1.0, out=out)
         return out
+
+
+class StreamingAudioConditioner:
+    """Causal filtering and smoothed gain. Published samples never change later.
+
+    State is reset between capture sessions, not between partial decodes. Gain follows
+    a 200 ms energy envelope, with a 50 ms attack and 500 ms release. The sample-wise
+    state makes the result independent of the caller's chunk boundaries.
+    """
+
+    def __init__(self, settings: Settings) -> None:
+        self.settings = settings
+        self._coeffs = (butterworth_highpass_biquad(settings.highpass_hz, SAMPLE_RATE)
+                        if settings.highpass_hz > 0 else (1, 0, 0, 0, 0))
+        self.reset()
+
+    def reset(self) -> None:
+        self._s1 = self._s2 = self._energy = 0.0
+        self._gain = 1.0
+
+    def __call__(self, audio: np.ndarray) -> np.ndarray:
+        b0, b1, b2, a1, a2 = self._coeffs
+        s1, s2, energy, gain = self._s1, self._s2, self._energy, self._gain
+        envelope = 1 - math.exp(-1 / (SAMPLE_RATE * .2))
+        attack = 1 - math.exp(-1 / (SAMPLE_RATE * .05))
+        release = 1 - math.exp(-1 / (SAMPLE_RATE * .5))
+        target, ceiling = self.settings.target_rms, self.settings.max_gain
+        result = []
+        for x in audio.tolist():
+            y = b0 * x + s1
+            s1 = b1 * x - a1 * y + s2
+            s2 = b2 * x - a2 * y
+            energy += envelope * (y * y - energy)
+            rms = math.sqrt(max(0.0, energy))
+            wanted = max(1.0, min(ceiling, target / rms)) if target > 0 and rms > 1e-4 else 1.0
+            gain += (attack if wanted < gain else release) * (wanted - gain)
+            result.append(max(-1.0, min(1.0, y * gain)))
+        self._s1, self._s2, self._energy, self._gain = s1, s2, energy, gain
+        return np.asarray(result, dtype=np.float32)

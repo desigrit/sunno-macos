@@ -211,6 +211,8 @@ def parse_args() -> tuple[Settings, argparse.Namespace]:
     parser.add_argument("--ws-port", type=int, default=8766)
     parser.add_argument("--end-silence-ms", type=int, default=520)
     parser.add_argument("--partial-interval-ms", type=int, default=450)
+    parser.add_argument("--fixed-timing", action="store_true",
+                        help="disable adaptive cadence for controlled comparisons")
     parser.add_argument(
         "--echo-transcript",
         action="store_true",
@@ -266,6 +268,7 @@ def parse_args() -> tuple[Settings, argparse.Namespace]:
         recordings_path=args.recordings_path,
         end_silence_ms=args.end_silence_ms,
         partial_interval_ms=args.partial_interval_ms,
+        adaptive_timing=not args.fixed_timing,
         vocabulary=tuple(v.strip() for v in args.vocabulary.split(",") if v.strip()),
     )
     return settings, args
@@ -303,12 +306,16 @@ async def run(settings: Settings, args: argparse.Namespace) -> None:
         """Thread-safe bridge from pipeline threads into the asyncio loop."""
         # Finished lines go to the recording as they happen, from whichever thread produced
         # them, so a kill loses at most the sentence being spoken.
-        if event.get("type") == "final" and recorder["active"] is not None:
-            try:
-                recorder["active"].add_line(event)
-            except Exception:
-                pass
-        loop.call_soon_threadsafe(events.put_nowait, event)
+        def deliver():
+            # Live and correction workers can emit concurrently. Serialize transcript writes
+            # with recording start/stop on this loop, so no late correction hits a closed file.
+            if event.get("type") in ("final", "correction") and recorder["active"] is not None:
+                try:
+                    recorder["active"].add_line(event)
+                except Exception:
+                    pass
+            events.put_nowait(event)
+        loop.call_soon_threadsafe(deliver)
 
     # One recording at a time, held in a dict so the closures below and the audio tap all see
     # the same object without a nonlocal chain through several nested functions.
@@ -561,6 +568,10 @@ async def run(settings: Settings, args: argparse.Namespace) -> None:
         from . import models as model_catalog
         from .engine import resolve_engine
 
+        if resolve_engine(args.engine, model_id) == "apple":
+            from . import asr_apple
+            return asr_apple.model_is_available(model_id), asr_apple.download_model
+
         if resolve_engine(args.engine, model_id) == "whisperkit":
             from . import asr_whisperkit
 
@@ -575,7 +586,7 @@ async def run(settings: Settings, args: argparse.Namespace) -> None:
         downloading = True
         chosen_model = model_id
         try:
-            present, fetch = model_backing(model_id)
+            present, fetch = await asyncio.to_thread(model_backing, model_id)
             if not present:
                 emit({"type": "download_started", "model": model_id})
                 print(f"Downloading {model_id} ...", flush=True)
@@ -634,7 +645,7 @@ async def run(settings: Settings, args: argparse.Namespace) -> None:
         # Decide up front whether we can load, or must ask the user to pick and download.
         from . import models as model_catalog
 
-        if model_backing(settings.model_size)[0]:
+        if (await asyncio.to_thread(model_backing, settings.model_size))[0]:
             model_ready.set()
         else:
             catalog = await asyncio.to_thread(
@@ -681,7 +692,9 @@ async def run(settings: Settings, args: argparse.Namespace) -> None:
         # will actually run gets to name itself, and reports its own compute units a moment
         # later once Core ML has resolved them.
         chosen = resolve_engine(args.engine, settings.model_size)
-        if is_stream_model(settings.model_size):
+        if chosen == "apple":
+            print(f"\nLoading {settings.model_size} through Apple SpeechAnalyzer ...")
+        elif is_stream_model(settings.model_size):
             print(f"\nLoading {settings.model_size} on cpu ...")
         elif chosen == "whisperkit":
             print(f"\nLoading Whisper {settings.model_size} through WhisperKit ...")

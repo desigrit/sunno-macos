@@ -58,6 +58,11 @@ echo "==> building the isolated audio service"
 mkdir -p "$ENGINE/capture-service/.build/release"
 cp capture-service/.build/release/capture-service "$ENGINE/capture-service/.build/release/"
 
+echo "==> building Apple Speech streaming service"
+(cd apple-speech-service && swift build -c release)
+mkdir -p "$ENGINE/apple-speech-service/.build/release"
+cp apple-speech-service/.build/release/apple-speech-service "$ENGINE/apple-speech-service/.build/release/"
+
 echo "==> building the WhisperKit service"
 # SwiftPM keeps its checkouts as bare repositories, which git refuses to read when
 # safe.bareRepository is "explicit". Overridden for this command only, through the

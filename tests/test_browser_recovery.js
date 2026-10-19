@@ -53,4 +53,25 @@ handle({ type: 'input', state: 'recovering', wanted: false, running: false });
 check(els.state.textContent === 'checking input, capture stays paused', 'metadata probing does not imply recording or capture');
 handle({ type: 'status', state: 'loading', model: 'new-model' });
 check(els.state.textContent === 'loading new-model', 'a model restart clears old input recovery state');
+
+const captionText = { textContent: 'original' };
+const speakerChip = { textContent: 'Renamed person' };
+els.captions.children = [{ dataset: { utterance: '1', startedAt: '123.5', speakerId: '7' },
+  querySelector(selector) { return selector === '.text' ? captionText : speakerChip; } }];
+vm.runInContext(`
+  let scrollChecks = 0;
+  function atBottom() { return false; }
+  function scrollIfFollowing(follow) { if (follow) scrollChecks++; }
+`, context);
+handle({ type: 'correction', id: 1, started_at: 123.5, text: 'corrected', speaker_id: 2, speaker: 'Old name' });
+check(els.captions.children.length === 1 && captionText.textContent === 'corrected',
+  'correction replaces a matching line without duplication');
+check(speakerChip.textContent === 'Renamed person' && els.captions.children[0].dataset.speakerId === '7',
+  'correction preserves speaker names and identity');
+handle({ type: 'correction', id: 1, started_at: 456, text: 'wrong session' });
+check(captionText.textContent === 'corrected', 'correction cannot cross engine sessions');
+check(vm.runInContext('scrollChecks', context) === 0, 'correction does not scroll a reader back down');
+els.captions.children = [];
+handle({ type: 'correction', id: 1, started_at: 123.5, text: 'resurrected' });
+check(els.captions.children.length === 0, 'correction cannot resurrect cleared history');
 console.log(`${checks} checks passed.`);
