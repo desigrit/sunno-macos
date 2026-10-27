@@ -71,69 +71,35 @@ deliberately put on it.
 
 ## Product decisions and model judgment
 
-The Mac port made me revisit choices that worked on Windows. The same model name can have
-different latency, confidence outputs and hardware costs through another engine. I wanted
-those differences to inform the product, including when a feature should stay unavailable.
+Bringing Sunno to Mac meant checking the Windows choices again. The same model can behave differently on another computer, including how fast it runs and how certain it sounds.
 
 ### Tradeoffs I made
 
-**Compare fast captions with later corrections.** I chose to add native Apple Speech and an
-optional Apple Speech + Whisper path while keeping the existing Whisper choices available.
-In hybrid mode, native captions arrive first and large-v3 can revise a completed line. This
-creates a comparison between responsiveness, recognition quality and the burden of rereading
-changed text. Running both models also costs more memory and power. The comparison build is
-implemented; an accuracy or latency improvement has not yet been established.
-[Streaming design and validation](docs/STREAMING.md)
+**Try fast captions followed by corrections.** I chose to add Apple Speech and an optional mode where Whisper checks its completed lines. The existing Whisper choices stayed available for comparison. Early words may help people follow along, but later changes can make them reread. Running both models also uses more memory and power. The comparison build exists; better speed or accuracy still needs to be demonstrated. [Design and checks](docs/STREAMING.md)
 
-**A correction must not hold up the conversation.** Live recognition and Whisper correction
-run separately. The correction queue is bounded, stale work is skipped, and a failed correction
-leaves the native caption intact. This gives up possible improvements to old text to keep the
-current conversation moving. A later result also cannot restore cleared captions or overwrite
-a speaker edit. [Correction behavior](docs/STREAMING.md#what-changed)
+**Keep old corrections from delaying new speech.** Sunno handles live captions and corrections separately. Only two corrections can wait at once, and work more than 12 seconds old is skipped. If a correction fails, the first caption stays. We give up some possible improvements to keep the conversation moving. A late correction also cannot bring back cleared captions or overwrite a speaker edit. [Correction rules](docs/STREAMING.md#what-changed)
 
-**Keep confidence meaningful across engines.** The initial port plan expected the Windows
-clarity formula to transfer to WhisperKit. A comparison using the same three clips and the
-same small Whisper model contradicted that assumption: the old mapping displayed 100 versus
-89 on one clip and 48 versus 0 on another. The clarity badge is therefore withheld on the
-WhisperKit path pending a new mapping. Three clips were enough to expose a mismatch, but not
-enough to calibrate a replacement. Even on Windows, clarity is a model-confidence proxy, not
-the probability that every word is correct.
-[Port measurements](docs/MACOS-PORT.md#the-clarity-score-does-not-transfer-unchanged)
+**Hide a confidence score that does not travel well.** We checked the same three clips with the same small model on Windows and Mac. Using the Windows scoring rule, one clip scored 89 on Windows and 100 on Mac; another scored 0 and 48. That made the Mac sound more reassuring without showing that its words were more accurate.
+
+The Mac clarity badge stays hidden until we can check a new scoring rule. Three clips exposed the problem but were too few to establish a replacement. Even on Windows, this score reflects the model's confidence, not the chance that every word is correct. [The comparison](docs/MACOS-PORT.md#the-clarity-score-does-not-transfer-unchanged)
 
 ### How I worked with AI
 
-I asked whether Sunno was making good use of Apple silicon, then asked how the proposed changes
-would apply to an M1 Max. The investigation found repeated processing of earlier audio and
-fixed scheduling delays, as well as questions about which accelerator to use.
+I asked whether Sunno was making good use of the Mac's hardware, including the M1 Max I could test. AI helped investigate, change the code and check that captions stayed in order when corrections arrived.
 
-AI helped investigate those paths, implement changes and write checks for state resets,
-corrections and transcript ordering. I chose incremental processing, adaptive timing, native
-streaming and the optional correction pass so I could compare the experiences in the same app.
-The existing engines stayed available for that comparison. An MLX backend was also proposed;
-that comparison remains open.
+I chose changes that process new audio without repeatedly redoing earlier work where possible, adjust update timing to the computer, and let me compare two captioning approaches in the same app. I left another way to run the models, called MLX, for a later comparison.
 
 ### What I pushed back on
 
-I questioned whether the existing implementation was getting enough from the hardware. That
-did not make a faster chip, a GPU path or a bigger model an automatic answer. The first changes
-I selected reduced repeated work and made two captioning strategies available to try.
+I questioned whether we were getting enough from the hardware. I wanted to test changes on the older M1 Max too, rather than assume results from a newer chip would carry over.
 
-I also wanted the improvements considered for the M1 Max I could test, rather than assuming
-a newer Max chip's performance would transfer. The resulting choice was a comparison build
-with explicit costs and retained alternatives. Native recognition passing a smoke test does
-not decide which mode should become the default.
+Keeping the existing models made comparison possible. Getting a new mode to run was a useful first step, but it was not enough to make it the default.
 
 ### What I would measure next
 
-The next comparison uses the same accented speech, names, technical vocabulary and long
-webinar turns across Whisper, Apple Speech and the hybrid mode. I would measure time to first
-useful text, time to stable text, correction quality, unwanted revisions, memory and energy
-on battery and AC.
+I would use the same accented speech, names, technical terms and long webinar turns across the available modes. I want to compare delay, word errors, useful corrections, distracting changes, memory and battery use.
 
-Those results need to be read alongside how tiring the captions are to follow. A correction
-can reduce word errors while making the experience harder to read. The current
-[validation record](docs/STREAMING.md#validation-of-the-030-comparison-build) establishes
-functional behavior and records skipped hardware checks; it is not a performance benchmark.
+The next question is which captions people can comfortably follow. The [current checks](docs/STREAMING.md#validation-of-the-030-comparison-build) cover software behavior and note hardware checks that were skipped; they do not establish which mode is best.
 
 ## Installing
 
