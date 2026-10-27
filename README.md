@@ -17,6 +17,9 @@ this app exists.
 
 Sunno means "listen" in Hindi and Urdu.
 
+Read about the [product decisions and model judgment](#product-decisions-and-model-judgment),
+[how I worked with AI](#how-i-worked-with-ai), and [what I pushed back on](#what-i-pushed-back-on).
+
 This is the Mac version of [Sunno](https://github.com/desigrit/sunno), which started on Windows.
 
 ## What it does
@@ -66,11 +69,77 @@ sensitive. And the diagnostics report is built as an allow-list rather than a fi
 filter has to anticipate every category of secret and an allow-list only emits what somebody
 deliberately put on it.
 
+## Product decisions and model judgment
+
+The Mac port made me revisit choices that worked on Windows. The same model name can have
+different latency, confidence outputs and hardware costs through another engine. I wanted
+those differences to inform the product, including when a feature should stay unavailable.
+
+### Tradeoffs I made
+
+**Compare fast captions with later corrections.** I chose to add native Apple Speech and an
+optional Apple Speech + Whisper path while keeping the existing Whisper choices available.
+In hybrid mode, native captions arrive first and large-v3 can revise a completed line. This
+creates a comparison between responsiveness, recognition quality and the burden of rereading
+changed text. Running both models also costs more memory and power. The comparison build is
+implemented; an accuracy or latency improvement has not yet been established.
+[Streaming design and validation](docs/STREAMING.md)
+
+**A correction must not hold up the conversation.** Live recognition and Whisper correction
+run separately. The correction queue is bounded, stale work is skipped, and a failed correction
+leaves the native caption intact. This gives up possible improvements to old text to keep the
+current conversation moving. A later result also cannot restore cleared captions or overwrite
+a speaker edit. [Correction behavior](docs/STREAMING.md#what-changed)
+
+**Keep confidence meaningful across engines.** The initial port plan expected the Windows
+clarity formula to transfer to WhisperKit. A comparison using the same three clips and the
+same small Whisper model contradicted that assumption: the old mapping displayed 100 versus
+89 on one clip and 48 versus 0 on another. The clarity badge is therefore withheld on the
+WhisperKit path pending a new mapping. Three clips were enough to expose a mismatch, but not
+enough to calibrate a replacement. Even on Windows, clarity is a model-confidence proxy, not
+the probability that every word is correct.
+[Port measurements](docs/MACOS-PORT.md#the-clarity-score-does-not-transfer-unchanged)
+
+### How I worked with AI
+
+I asked whether Sunno was making good use of Apple silicon, then asked how the proposed changes
+would apply to an M1 Max. The investigation found repeated processing of earlier audio and
+fixed scheduling delays, as well as questions about which accelerator to use.
+
+AI helped investigate those paths, implement changes and write checks for state resets,
+corrections and transcript ordering. I chose incremental processing, adaptive timing, native
+streaming and the optional correction pass so I could compare the experiences in the same app.
+The existing engines stayed available for that comparison. An MLX backend was also proposed;
+that comparison remains open.
+
+### What I pushed back on
+
+I questioned whether the existing implementation was getting enough from the hardware. That
+did not make a faster chip, a GPU path or a bigger model an automatic answer. The first changes
+I selected reduced repeated work and made two captioning strategies available to try.
+
+I also wanted the improvements considered for the M1 Max I could test, rather than assuming
+a newer Max chip's performance would transfer. The resulting choice was a comparison build
+with explicit costs and retained alternatives. Native recognition passing a smoke test does
+not decide which mode should become the default.
+
+### What I would measure next
+
+The next comparison uses the same accented speech, names, technical vocabulary and long
+webinar turns across Whisper, Apple Speech and the hybrid mode. I would measure time to first
+useful text, time to stable text, correction quality, unwanted revisions, memory and energy
+on battery and AC.
+
+Those results need to be read alongside how tiring the captions are to follow. A correction
+can reduce word errors while making the experience harder to read. The current
+[validation record](docs/STREAMING.md#validation-of-the-030-comparison-build) establishes
+functional behavior and records skipped hardware checks; it is not a performance benchmark.
+
 ## Installing
 
 Apple Silicon, macOS 13.3 or later.
 
-**[Download Sunno for macOS](https://github.com/desigrit/sunno-macos/releases/latest)** — about
+**[Download Sunno for macOS](https://github.com/desigrit/sunno-macos/releases/latest)**, about
 80 MB. Unzip it and drag **Sunno** to your Applications folder. It carries its own Python and
 speech service, so there is nothing else to install.
 
@@ -84,11 +153,11 @@ To get past it:
 
 You only do that once. There is no way around it short of an Apple Developer Program membership,
 and macOS 15 removed the Control-click shortcut that used to skip it. If you would rather not
-trust a build you cannot verify, that is a reasonable position — the source is all here, and
+trust a build you cannot verify, that is a reasonable position. The source is all here, and
 [building it yourself](#building) takes a few minutes.
 
 **Two permissions.** Sunno asks for the microphone the first time you record. For captioning what
-your Mac is *playing* — a call, a film, a video — it also needs **Privacy & Security → Screen &
+your Mac is *playing* (a call, a film, a video), it also needs **Privacy & Security → Screen &
 System Audio Recording**, and macOS never prompts for that one. Switch Sunno on there yourself
 and reopen it. The app explains this at the point you need it.
 
@@ -167,7 +236,7 @@ its latency figures and speaker ids while using the app.
 
 **The demo engine exists because speaker labelling cannot be demonstrated with synthesised
 speech.** Measured with the CAM++ embeddings the app actually uses, macOS `say` voices score
-0.586 mean cosine similarity to themselves and 0.487 to each other — distributions that overlap
+0.586 mean cosine similarity to themselves and 0.487 to each other, distributions that overlap
 almost completely, because they all come out of one synthesiser and the model was trained to
 separate humans. No threshold works, and there is no arrangement of `say` voices that produces
 a four-speaker screenshot. It lives in `scripts/`, which `package-app.sh` does not copy, so
@@ -284,7 +353,7 @@ No captioning system is perfect, and anyone who tells you otherwise is selling s
 
   **The delay estimates in the model picker are the measured ones**, taken on an M1 Max, and
   they are what the table above says. They are not rescaled for a faster Mac, because the
-  benchmark the app has measures the processor and says nothing about the Neural Engine —
+  benchmark the app has measures the processor and says nothing about the Neural Engine,
   so a newer machine is quoted these figures until it has run the model once, after which the
   picker quotes what that machine has actually been seen doing.
   [`docs/MACOS-PORT.md`](docs/MACOS-PORT.md) has the measurements behind it.
@@ -324,7 +393,8 @@ window alive and reconnecting instead of taking the app down mid-conversation.
 | `ui/` | Browser client, for the phone or handheld route |
 | `whisperkit-service/` | Swift decode service, so Whisper reaches the Neural Engine |
 | `capture-service/` | Isolated Core Audio and ScreenCaptureKit capture with stable device identity |
-| `scripts/` | Engine setup, packaging, releasing, screenshots || `docs/HANDOVER.md` | The full state of the work: what is built, measured, parked and next |
+| `scripts/` | Engine setup, packaging, releasing, screenshots |
+| `docs/HANDOVER.md` | The full state of the work: what is built, measured, parked and next |
 | `docs/MACOS-PORT.md` | The decisions, the evidence, and what is still unverified |
 | `docs/macos-mockup.html` | The approved interface, screen by screen |
 
