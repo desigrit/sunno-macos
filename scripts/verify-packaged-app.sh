@@ -11,6 +11,7 @@ ditto -x -k "$OUT/Sunno-$VERSION-macOS-arm64.zip" "$TEMP"
 APP="$TEMP/Sunno.app"
 ENGINE="$APP/Contents/Resources/engine"
 codesign --verify --deep --strict "$APP"
+python3 "$ROOT/scripts/verify_macos_compatibility.py" "$APP"
 echo 'Checking native app and helper architectures'
 for BINARY in "$APP/Contents/MacOS/Sunno" \
               "$ENGINE/capture-service/.build/release/capture-service" \
@@ -36,6 +37,16 @@ import server.app
 from server.engine import available_engines, resolve_engine
 assert available_engines()['whisperkit']
 assert resolve_engine('auto', 'base') == 'whisperkit'
+print('Loading the bundled VAD and speaker models together', flush=True)
+import numpy as np
+from pathlib import Path
+from server.vad import StreamingSileroVAD
+from server.speaker import SpeakerIdentifier
+vad = StreamingSileroVAD()
+assert 0 <= vad(np.zeros(512, dtype=np.float32)) <= 1
+speaker = SpeakerIdentifier(Path('models/speaker-embedding-campplus-en.onnx'), num_threads=1)
+assert speaker._extractor.dim > 0
+assert 0 <= vad(np.zeros(512, dtype=np.float32)) <= 1
 print('Packaged Python and all speech engine dependencies loaded on arm64')
 PY
 )

@@ -12,29 +12,26 @@ third-party notices. The complete upstream license is bundled as `Contents/Resou
 
 | Component | Version | Licence |
 |---|---|---|
-| PyAudioWPatch | 0.2.12.8 | Apache-2.0 license |
-| av | 18.0.0 | BSD-3-Clause |
-| ctranslate2 | 4.8.1 | MIT |
-| faster-whisper | 1.2.1 | MIT |
+| av | 15.1.0 | BSD-3-Clause |
 | huggingface-hub | 1.25.1 | Apache-2.0 |
 | numpy | 2.5.1 | BSD-3-Clause AND 0BSD AND MIT AND Zlib AND CC0-1.0 |
-| onnxruntime | 1.28.0 | MIT License |
-| sherpa-onnx | 1.13.4 | Apache licensed, as found in the LICENSE file |
+| onnxruntime | 1.22.1 | MIT License |
+| sherpa-onnx | 1.10.46 | Apache-2.0 |
 | sounddevice | 0.5.5 | MIT |
 | soxr **(copyleft: see notes)** | 1.1.0 | LGPL-2.1-or-later |
-| tokenizers | 0.23.1 | Apache Software License |
-| tqdm **(copyleft: see notes)** | 4.70.0 | MPL-2.0 AND MIT |
+| tqdm **(copyleft: see notes)** | 4.70.1 | MPL-2.0 AND MIT |
 | websockets | 17.0 | BSD-3-Clause |
 
 ## Native and model components
 
 | Component | Licence | Notes |
 |---|---|---|
-| NVIDIA CUDA runtime (cuBLAS, NVRTC) | NVIDIA CUDA Toolkit EULA | Redistributable components only, per the EULA's distribution list. https://docs.nvidia.com/cuda/eula/ |
+| WhisperKit 1.1.0 | MIT | Native speech recognition through Core ML. |
+| Swift Argument Parser 1.8.2 | Apache-2.0 | Command-line argument parsing in the native speech helper. |
 | CPython 3.12 | Python Software Foundation License 2.0 | https://docs.python.org/3/license.html |
 | Whisper model weights | MIT (OpenAI) | Downloaded at first run, not redistributed in the package. |
 | Silero VAD | MIT | Vendored at `server/assets/silero_vad_v6.onnx` and redistributed in the package. From [snakers4/silero-vad](https://github.com/snakers4/silero-vad). |
-| WeSpeaker CAM++ speaker embedding | Apache-2.0 | Downloaded at first run, not redistributed in the package. |
+| WeSpeaker CAM++ speaker embedding | Apache-2.0 | Bundled at `Contents/Resources/engine/models/speaker-embedding-campplus-en.onnx`. |
 | Streaming Zipformer English transducer | Apache-2.0 | Downloaded at first run, not redistributed in the package. From [csukuangfj/sherpa-onnx-streaming-zipformer-en-2023-06-26](https://huggingface.co/csukuangfj/sherpa-onnx-streaming-zipformer-en-2023-06-26), trained with [k2-fsa/icefall](https://github.com/k2-fsa/icefall) on LibriSpeech. |
 | Kroko ASR streaming English transducer | **None declared** | Optional, never a default. See the section below. |
 

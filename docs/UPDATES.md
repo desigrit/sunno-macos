@@ -23,7 +23,9 @@ It does not need an SSH connection, an awake personal Mac or an unlocked login K
    Alternatively, run `gh workflow run release-macos.yml --repo desigrit/sunno-macos --ref main`.
 4. The workflow builds the app and all three native speech helpers, packages the Python runtime,
    runs updater checks, verifies code signatures after extracting the ZIP, loads its native
-   Python dependencies, and independently verifies the archive and feed signatures.
+   Python dependencies and bundled voice activity/speaker models, and independently verifies
+   the archive and feed signatures. Native deployment targets are checked against the app's
+   minimum macOS version, including libraries whose wheel tags claim broader compatibility.
 5. Only after those checks pass, it creates the version tag at the exact source commit. The ZIP,
    appcast and SHA256SUMS upload to a draft, then the complete release becomes public.
 
