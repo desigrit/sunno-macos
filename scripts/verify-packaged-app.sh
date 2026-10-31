@@ -11,6 +11,7 @@ ditto -x -k "$OUT/Sunno-$VERSION-macOS-arm64.zip" "$TEMP"
 APP="$TEMP/Sunno.app"
 ENGINE="$APP/Contents/Resources/engine"
 codesign --verify --deep --strict "$APP"
+echo 'Checking native app and helper architectures'
 for BINARY in "$APP/Contents/MacOS/Sunno" \
               "$ENGINE/capture-service/.build/release/capture-service" \
               "$ENGINE/apple-speech-service/.build/release/apple-speech-service" \
@@ -19,13 +20,25 @@ for BINARY in "$APP/Contents/MacOS/Sunno" \
   lipo -verify_arch arm64 "$BINARY"
   codesign --verify --strict "$BINARY"
 done
-PYTHONDONTWRITEBYTECODE=1 "$ENGINE/python/bin/python3" - <<'PY'
+echo 'Loading the packaged speech runtime'
+(cd "$ENGINE"
+PYTHONDONTWRITEBYTECODE=1 "$ENGINE/python/bin/python3" -u - <<'PY'
+import importlib
 import platform
-import av, huggingface_hub, moonshine_voice, numpy, onnxruntime, sherpa_onnx, sounddevice, soxr, websockets
 assert platform.machine() == 'arm64'
+for name in ('numpy', 'av', 'huggingface_hub', 'onnxruntime', 'sherpa_onnx', 'sounddevice', 'soxr', 'websockets'):
+    print('Loading', name, flush=True)
+    importlib.import_module(name)
+import onnxruntime
 assert onnxruntime.get_available_providers()
+print('Loading the packaged Sunno engine', flush=True)
+import server.app
+from server.engine import available_engines, resolve_engine
+assert available_engines()['whisperkit']
+assert resolve_engine('auto', 'base') == 'whisperkit'
 print('Packaged Python and all speech engine dependencies loaded on arm64')
 PY
+)
 PUBLIC="$(awk '/^SUNNO_SPARKLE_PUBLIC_KEY =/ {print $3}' config/Updater.xcconfig)"
 python3 scripts/verify_release.py "$OUT/Sunno-$VERSION-macOS-arm64.zip" "$OUT/appcast.xml" "$PUBLIC"
 # Launching imports must not change the signed bundle.

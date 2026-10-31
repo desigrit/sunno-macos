@@ -28,7 +28,9 @@ It does not need an SSH connection, an awake personal Mac or an unlocked login K
    appcast and SHA256SUMS upload to a draft, then the complete release becomes public.
 
 Packages are stored directly in GitHub Releases. The workflow does not retain large Actions
-artifacts or dependency caches. Resolved Python dependency versions are included inside the app
+artifacts or dependency caches. `requirements-release-macos.txt` pins the Python dependencies
+and their wheel hashes. Wheels are selected for macOS 13 rather than the runner's newer OS.
+Resolved Python dependency versions are also included inside the app
 at `Contents/Resources/engine/python/sunno-python-requirements.txt`.
 
 ### Signing credentials

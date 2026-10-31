@@ -45,7 +45,8 @@ PY_VERSION="${SUNNO_PY_VERSION:-3.12.14}"
 PY_RELEASE="${SUNNO_PY_RELEASE:-20260814}"
 PY_SHA256="${SUNNO_PY_SHA256:-dd5b76ab11451a4a4367c17c61d944dded56b425396b07f102922a7ebef7d55f}"
 PY_URL="https://github.com/astral-sh/python-build-standalone/releases/download/${PY_RELEASE}/cpython-${PY_VERSION}+${PY_RELEASE}-aarch64-apple-darwin-install_only_stripped.tar.gz"
-PY_CACHE="${SUNNO_PY_CACHE:-$ROOT/.cache/python-${PY_VERSION}-${PY_RELEASE}}"
+PY_DEPENDENCIES="$(shasum -a 256 requirements-release-macos.txt | cut -c1-12)"
+PY_CACHE="${SUNNO_PY_CACHE:-$ROOT/.cache/python-${PY_VERSION}-${PY_RELEASE}-${PY_DEPENDENCIES}}"
 
 export DEVELOPER_DIR="${DEVELOPER_DIR:-$(xcode-select -p)}"
 
@@ -110,9 +111,16 @@ if [ ! -d "$PY_CACHE" ]; then
   # which decode on the processor and are three to five times slower than the Neural Engine
   # path this app defaults to. Shipping them would add about a hundred megabytes and a pile of
   # unsigned native libraries to be a fallback nobody would want to fall back to.
-  "$PY_CACHE/bin/python3" -m pip install --quiet --upgrade pip
-  "$PY_CACHE/bin/python3" -m pip install --quiet \
-    numpy sounddevice soxr websockets onnxruntime sherpa-onnx huggingface_hub av moonshine-voice==0.1.5
+  "$PY_CACHE/bin/python3" -m pip install --quiet pip==26.2.2
+  wheels="$(mktemp -d)"
+  # The runner has a newer OS than the oldest supported Mac. Select compatible
+  # wheels explicitly so it cannot silently ship libraries requiring macOS 14+.
+  "$PY_CACHE/bin/python3" -m pip download --quiet --require-hashes \
+    --platform macosx_13_0_arm64 --only-binary=:all: --dest "$wheels" \
+    -r requirements-release-macos.txt
+  "$PY_CACHE/bin/python3" -m pip install --quiet --no-compile --require-hashes \
+    --no-index --find-links "$wheels" -r requirements-release-macos.txt
+  rm -rf "$wheels"
   "$PY_CACHE/bin/python3" -m pip check
   "$PY_CACHE/bin/python3" -m pip freeze > "$PY_CACHE/sunno-python-requirements.txt"
 
