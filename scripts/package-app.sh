@@ -16,6 +16,8 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
+[ "$(uname -m)" = arm64 ] || { echo 'Package Sunno on an Apple silicon runner.' >&2; exit 1; }
+export PYTHONDONTWRITEBYTECODE=1
 
 OUT="${SUNNO_OUT:-$ROOT/dist}"
 APP="$OUT/Sunno.app"
@@ -41,10 +43,11 @@ PY
 # moved, which is exactly what a bundle does to it.
 PY_VERSION="${SUNNO_PY_VERSION:-3.12.14}"
 PY_RELEASE="${SUNNO_PY_RELEASE:-20260814}"
+PY_SHA256="${SUNNO_PY_SHA256:-dd5b76ab11451a4a4367c17c61d944dded56b425396b07f102922a7ebef7d55f}"
 PY_URL="https://github.com/astral-sh/python-build-standalone/releases/download/${PY_RELEASE}/cpython-${PY_VERSION}+${PY_RELEASE}-aarch64-apple-darwin-install_only_stripped.tar.gz"
 PY_CACHE="${SUNNO_PY_CACHE:-$ROOT/.cache/python-${PY_VERSION}-${PY_RELEASE}}"
 
-export DEVELOPER_DIR="${DEVELOPER_DIR:-/Library/Developer/CommandLineTools}"
+export DEVELOPER_DIR="${DEVELOPER_DIR:-$(xcode-select -p)}"
 
 echo "==> Sunno $VERSION"
 rm -rf "$APP"
@@ -86,7 +89,7 @@ echo "==> building the WhisperKit service"
 # environment, rather than by writing to anybody's global config.
 (cd whisperkit-service \
    && GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=safe.bareRepository GIT_CONFIG_VALUE_0=all \
-      swift build -c release >/dev/null)
+      swift build -c release --force-resolved-versions)
 mkdir -p "$ENGINE/whisperkit-service/.build/release"
 cp whisperkit-service/.build/release/whisperkit-service "$ENGINE/whisperkit-service/.build/release/"
 
@@ -97,6 +100,7 @@ if [ ! -d "$PY_CACHE" ]; then
   mkdir -p "$(dirname "$PY_CACHE")"
   tmp="$(mktemp -d)"
   curl -fsSL -o "$tmp/py.tar.gz" "$PY_URL"
+  printf '%s  %s\n' "$PY_SHA256" "$tmp/py.tar.gz" | shasum -a 256 --check
   tar xzf "$tmp/py.tar.gz" -C "$tmp"
   mv "$tmp/python" "$PY_CACHE"
   rm -rf "$tmp"
@@ -109,6 +113,8 @@ if [ ! -d "$PY_CACHE" ]; then
   "$PY_CACHE/bin/python3" -m pip install --quiet --upgrade pip
   "$PY_CACHE/bin/python3" -m pip install --quiet \
     numpy sounddevice soxr websockets onnxruntime sherpa-onnx huggingface_hub av moonshine-voice==0.1.5
+  "$PY_CACHE/bin/python3" -m pip check
+  "$PY_CACHE/bin/python3" -m pip freeze > "$PY_CACHE/sunno-python-requirements.txt"
 
   echo "==> trimming"
   rm -rf "$PY_CACHE"/lib/python*/site-packages/pip \
@@ -228,25 +234,33 @@ INNER
 # machine that did not build it. This is the macOS equivalent of the staging discipline in
 # the Windows build's stage-backend.ps1, and it fails late rather than at build time, which
 # is why it is done exhaustively rather than where it seems necessary.
-IDENTITY="${SUNNO_IDENTITY:-$(security find-certificate -c "Sunno Local Dev" -Z ~/Library/Keychains/login.keychain-db 2>/dev/null | awk '/SHA-1 hash:/ {print $3; exit}')}"
+IDENTITY="${SUNNO_IDENTITY:-$(security find-certificate -c "Sunno Local Dev" -Z ~/Library/Keychains/login.keychain-db 2>/dev/null | awk '/SHA-1 hash:/ {print $3; exit}' || true)}"
 [ -z "$IDENTITY" ] && IDENTITY="-"
+if [ "${GITHUB_ACTIONS:-}" = true ] && [ "$IDENTITY" = - ]; then
+  echo 'A release signing identity is required on GitHub Actions.' >&2
+  exit 1
+fi
+SIGNING_ARGS=(--force --sign "$IDENTITY" --options runtime --timestamp=none)
+if [ -n "${SUNNO_SIGNING_KEYCHAIN:-}" ]; then
+  SIGNING_ARGS+=(--keychain "$SUNNO_SIGNING_KEYCHAIN")
+fi
 
 signed=0
 while IFS= read -r macho; do
   case "$macho" in
     */capture-service)
       # Capture runs in its own hardened process; entitlements do not inherit.
-      codesign --force --sign "$IDENTITY" --options runtime \
+      codesign "${SIGNING_ARGS[@]}" \
         --entitlements "$ROOT/capture-service/Entitlements.plist" --timestamp=none "$macho"
       ;;
     # Anything that loads native extensions is a loader and needs the exception. Everything
     # else only needs a valid signature.
     */bin/python*|*/whisperkit-service)
-      codesign --force --sign "$IDENTITY" --options runtime \
-        --entitlements "$OUT/inner.entitlements" --timestamp=none "$macho" 2>/dev/null || true
+      codesign "${SIGNING_ARGS[@]}" \
+        --entitlements "$OUT/inner.entitlements" "$macho"
       ;;
     *)
-      codesign --force --sign "$IDENTITY" --options runtime --timestamp=none "$macho" 2>/dev/null || true
+      codesign "${SIGNING_ARGS[@]}" "$macho"
       ;;
   esac
   signed=$((signed + 1))
@@ -260,12 +274,12 @@ for HELPER in "$FRAMEWORK/Versions/B/Autoupdate" \
               "$FRAMEWORK/Versions/B/Updater.app" \
               "$FRAMEWORK/Versions/B/XPCServices/Downloader.xpc" \
               "$FRAMEWORK/Versions/B/XPCServices/Installer.xpc"; do
-  codesign --force --sign "$IDENTITY" --options runtime --timestamp=none \
+  codesign "${SIGNING_ARGS[@]}" \
     --preserve-metadata=entitlements "$HELPER"
 done
-codesign --force --sign "$IDENTITY" --options runtime --timestamp=none "$FRAMEWORK"
+codesign "${SIGNING_ARGS[@]}" "$FRAMEWORK"
 
-codesign --force --sign "$IDENTITY" --options runtime \
+codesign "${SIGNING_ARGS[@]}" \
   --entitlements "$OUT/Sunno.entitlements" "$APP"
 
 codesign --verify --deep --strict "$APP" || {

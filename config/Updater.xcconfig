@@ -1,3 +1,3 @@
-// Public Ed25519 verification key. The private key stays in the release Mac's Keychain.
-// Set this once using scripts/configure-updater-key.sh before packaging a release.
-SUNNO_SPARKLE_PUBLIC_KEY =
+// Public Ed25519 verification key. The private seed is the SPARKLE_PRIVATE_KEY Actions secret.
+// Preserve this key across releases so installed copies can verify future updates.
+SUNNO_SPARKLE_PUBLIC_KEY = 1lsWhSFaJOS/ioQbpbBsgN4ZxrGBqFlZphfKjzyvAgE=

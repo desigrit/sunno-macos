@@ -34,8 +34,9 @@ are verified before installation. Speech recognition stays on your Mac.
 
 This build includes its engine. Speech models download when selected.
 NOTE
-# Upload both assets to a draft first so the live feed never points at a missing ZIP.
-"$GH" release create "$TAG" "$ZIP" "$ROOT/dist/appcast.xml" --repo "$REPO" \
+# Upload all assets to a draft first so the live feed never points at a missing ZIP.
+(cd "$ROOT/dist" && shasum -a 256 "$(basename "$ZIP")" appcast.xml > SHA256SUMS)
+"$GH" release create "$TAG" "$ZIP" "$ROOT/dist/appcast.xml" "$ROOT/dist/SHA256SUMS" --repo "$REPO" \
   --verify-tag --draft --title "Sunno $VERSION for macOS" --notes-file "$NOTES"
 "$GH" release edit "$TAG" --repo "$REPO" --draft=false --latest
 echo "https://github.com/$REPO/releases/tag/$TAG"
