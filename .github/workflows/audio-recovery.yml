@@ -33,9 +33,16 @@ jobs:
       - name: Compile the complete native app
         run: |
           mkdir -p build
+          SPARKLE="$(bash scripts/fetch-sparkle.sh)"
           swiftc -swift-version 5 -sdk "$(xcrun --show-sdk-path)" \
             -target arm64-apple-macos13.3 -module-name Sunno \
+            -F "$SPARKLE" -framework Sparkle \
+            -Xlinker -rpath -Xlinker "$SPARKLE" \
             $(find Sunno -name '*.swift' | sort) -o build/Sunno
+      - name: GitHub updater and release metadata checks
+        run: |
+          python tests/test_app_updater.py
+          python tests/test_appcast.py
       - name: Verify packaged capture helper and hardened signing
         run: |
           mkdir -p "$(dirname "$SUNNO_CAPTURE_HELPER")"

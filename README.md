@@ -22,6 +22,11 @@ Read about the [product decisions and model judgment](#product-decisions-and-mod
 
 This is the Mac version of [Sunno](https://github.com/desigrit/sunno), which started on Windows.
 
+The next release is 1.0.92.0, matching the Windows release number. macOS bundle metadata
+uses Apple's three-part version 1.0.92; Sunno's Settings and release downloads show 1.0.92.0.
+It adds a manual GitHub update check in Settings and the Sunno menu. See
+[release setup](docs/UPDATES.md) for the signing and packaging steps.
+
 ## What it does
 
 Point it at a microphone and it writes down what people are saying, as they say it. Put it near
@@ -56,8 +61,9 @@ Sunno does the recognition on your own machine. No account, no sign in, no telem
 to send anything to. Turn off your Wi-Fi and it works exactly the same. The people around you are
 not being uploaded anywhere, and you can tell them so honestly.
 
-The only time Sunno touches the network is downloading the speech model on first run. After
-that, never.
+Sunno downloads speech models when you choose them. It also contacts GitHub when you click
+**Check for Updates** in **Settings > Updates** or the **Sunno** menu. Update checks are manual;
+audio and transcripts are never included. Captioning works offline once a model is downloaded.
 
 Two things get written to disk, and both are yours: a pinned speaker's name and voice
 fingerprint, so Sunno recognises them next time, and any recording you deliberately make.

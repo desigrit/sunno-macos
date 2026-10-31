@@ -16,6 +16,7 @@ struct SunnoApp: App {
     @StateObject private var audioWatcher = AudioDeviceWatcher()
     @StateObject private var recording = RecordingController()
     @StateObject private var models = ModelSwitch()
+    @StateObject private var updater = AppUpdater()
 
     var body: some Scene {
         WindowGroup {
@@ -44,7 +45,8 @@ struct SunnoApp: App {
                 settings: settings,
                 store: store,
                 onCommand: sendCommand,
-                diagnostics: diagnosticsReport
+                diagnostics: diagnosticsReport,
+                updater: updater
             )
         }
     }
@@ -58,6 +60,10 @@ struct SunnoApp: App {
     // repeatedly and a trip to the menu bar for it would be tiresome.
     @CommandsBuilder
     private var menuCommands: some Commands {
+        CommandGroup(after: .appInfo) {
+            Button("Check for Updates...") { updater.checkForUpdates() }
+                .disabled(updater.isChecking || recording.state == .recording || recording.state == .saving)
+        }
         CommandGroup(after: .toolbar) {
             Button("Larger Text") { settings.stepFontSize(by: 1) }
                 .keyboardShortcut("+", modifiers: .command)
@@ -93,6 +99,7 @@ struct SunnoApp: App {
 
     private func startUp() {
         guard backend.claimStartUp() else { return }
+        updater.recordingIsBusy = { recording.state == .recording || recording.state == .saving }
         devices.configure(httpPort: backend.httpPort)
         devices.select(settings.inputTarget)
         models.restart = { model in restartOnModel(model) }
@@ -110,6 +117,7 @@ struct SunnoApp: App {
         backend.onFailure = {
             if models.engineFailed() { return true }
             recording.reset()
+            updater.recordingStateChanged()
             return false
         }
         client.onConnected = { inputs.reconnected() }
@@ -117,6 +125,7 @@ struct SunnoApp: App {
             guard inputs.apply(event) else { return }
             store.apply(event)
             recording.apply(event)
+            updater.recordingStateChanged()
             applyModelSwitch(event)
             if event.kind == .input, inputs.pending == nil, let target = event.target {
                 devices.select(target)

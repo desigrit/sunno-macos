@@ -2,6 +2,12 @@
 
 Sunno redistributes the components below. Each remains under its own licence.
 
+## macOS updater
+
+[Sparkle 2.10.1](https://github.com/sparkle-project/Sparkle/tree/2.10.1) provides native update
+download verification, installation and relaunch. It uses the MIT license and includes additional
+third-party notices. The complete upstream license is bundled as `Contents/Resources/Sparkle-LICENSE.txt`.
+
 ## Python packages
 
 | Component | Version | Licence |

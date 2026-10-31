@@ -13,6 +13,7 @@ struct SettingsWindow: View {
     @ObservedObject var store: TranscriptStore
     let onCommand: (BackendCommand) -> Void
     let diagnostics: () -> String
+    @ObservedObject var updater: AppUpdater
 
     var body: some View {
         TabView {
@@ -26,8 +27,35 @@ struct SettingsWindow: View {
                 .tabItem { Label("Speakers", systemImage: "person.2") }
             DiagnosticsPane(diagnostics: diagnostics)
                 .tabItem { Label("Diagnostics", systemImage: "arrow.down.doc") }
+            UpdatesPane(updater: updater)
+                .tabItem { Label("Updates", systemImage: "arrow.triangle.2.circlepath") }
         }
         .frame(width: 620, height: 430)
+    }
+}
+
+private struct UpdatesPane: View {
+    @ObservedObject var updater: AppUpdater
+
+    var body: some View {
+        Form {
+            LabeledContent("Version", value: Bundle.main.object(forInfoDictionaryKey: "SunnoReleaseVersion") as? String ?? Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "Development")
+            Button("Check for Updates...") { updater.checkForUpdates() }
+                .disabled(updater.isChecking)
+            if !updater.status.isEmpty {
+                Text(updater.status)
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Text("Updates come from GitHub and are checked only when you ask. Sunno restarts after installing an update.")
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            Link("View GitHub Releases", destination: AppUpdater.releasesURL)
+        }
+        .formStyle(.grouped)
+        .padding(.top, 8)
     }
 }
 

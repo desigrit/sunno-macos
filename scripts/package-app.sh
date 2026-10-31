@@ -21,8 +21,19 @@ OUT="${SUNNO_OUT:-$ROOT/dist}"
 APP="$OUT/Sunno.app"
 RES="$APP/Contents/Resources"
 ENGINE="$RES/engine"
-VERSION="$(awk -F'"' '/MARKETING_VERSION/ {print $2}' project.yml)"
+VERSION="$(awk -F'"' '/SUNNO_RELEASE_VERSION:/ {print $2}' project.yml)"
+BUNDLE_VERSION="$(awk -F'"' '/MARKETING_VERSION:/ {print $2}' project.yml)"
+BUILD="$(awk -F'"' '/CURRENT_PROJECT_VERSION/ {print $2}' project.yml)"
 ZIP="$OUT/Sunno-$VERSION-macOS-arm64.zip"
+SPARKLE="$(bash "$ROOT/scripts/fetch-sparkle.sh")"
+PUBLIC_KEY="$(awk '/^SUNNO_SPARKLE_PUBLIC_KEY =/ {print $3}' config/Updater.xcconfig)"
+python3 - "$PUBLIC_KEY" <<'PY'
+import base64, sys
+try:
+    assert len(base64.b64decode(sys.argv[1], validate=True)) == 32
+except Exception:
+    raise SystemExit('Configure the updater signing key with scripts/configure-updater-key.sh before packaging.')
+PY
 
 # A relocatable CPython. The system one cannot be copied: /usr/bin/python3 is a stub that
 # offers to install the Command Line Tools, and the Command Line Tools one is a framework
@@ -47,9 +58,15 @@ swiftc \
   -sdk "$(xcrun --show-sdk-path)" \
   -target arm64-apple-macos13.3 \
   -module-name Sunno \
+  -F "$SPARKLE" -framework Sparkle \
+  -Xlinker -rpath -Xlinker @executable_path/../Frameworks \
   -O \
   $(find Sunno -name '*.swift' | sort) \
   -o "$APP/Contents/MacOS/Sunno"
+mkdir -p "$APP/Contents/Frameworks"
+ditto "$SPARKLE/Sparkle.framework" "$APP/Contents/Frameworks/Sparkle.framework"
+cp THIRD-PARTY-NOTICES.md "$RES/"
+cp "$SPARKLE/LICENSE" "$RES/Sparkle-LICENSE.txt"
 
 # ---------------------------------------------------------------- the speech service
 
@@ -91,7 +108,7 @@ if [ ! -d "$PY_CACHE" ]; then
   # unsigned native libraries to be a fallback nobody would want to fall back to.
   "$PY_CACHE/bin/python3" -m pip install --quiet --upgrade pip
   "$PY_CACHE/bin/python3" -m pip install --quiet \
-    numpy sounddevice soxr websockets onnxruntime sherpa-onnx huggingface_hub
+    numpy sounddevice soxr websockets onnxruntime sherpa-onnx huggingface_hub av moonshine-voice==0.1.5
 
   echo "==> trimming"
   rm -rf "$PY_CACHE"/lib/python*/site-packages/pip \
@@ -133,8 +150,17 @@ cat > "$APP/Contents/Info.plist" <<PLIST
   <key>CFBundleDisplayName</key><string>Sunno</string>
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>CFBundleIconFile</key><string>Sunno</string>
-  <key>CFBundleShortVersionString</key><string>$VERSION</string>
-  <key>CFBundleVersion</key><string>$VERSION</string>
+  <key>CFBundleShortVersionString</key><string>$BUNDLE_VERSION</string>
+  <key>SunnoReleaseVersion</key><string>$VERSION</string>
+  <key>CFBundleVersion</key><string>$BUILD</string>
+  <key>SUFeedURL</key><string>https://github.com/desigrit/sunno-macos/releases/latest/download/appcast.xml</string>
+  <key>SUPublicEDKey</key><string>$PUBLIC_KEY</string>
+  <key>SURequireSignedFeed</key><true/>
+  <key>SUVerifyUpdateBeforeExtraction</key><true/>
+  <key>SUEnableAutomaticChecks</key><false/>
+  <key>SUAutomaticallyUpdate</key><false/>
+  <key>SUAllowsAutomaticUpdates</key><false/>
+  <key>SUSendProfileInfo</key><false/>
   <key>LSMinimumSystemVersion</key><string>13.3</string>
   <key>LSApplicationCategoryType</key><string>public.app-category.utilities</string>
   <key>NSHumanReadableCopyright</key><string>MIT licensed. Runs entirely on this Mac.</string>
@@ -228,6 +254,17 @@ done < <(find "$ENGINE" -type f \( -name "*.so" -o -name "*.dylib" -o -perm -u+x
          -exec sh -c 'file -b "$1" | grep -q Mach-O' _ {} \; -print)
 echo "    signed $signed binaries inside the bundle"
 
+# Seal nested updater helpers before the framework and outer application.
+FRAMEWORK="$APP/Contents/Frameworks/Sparkle.framework"
+for HELPER in "$FRAMEWORK/Versions/B/Autoupdate" \
+              "$FRAMEWORK/Versions/B/Updater.app" \
+              "$FRAMEWORK/Versions/B/XPCServices/Downloader.xpc" \
+              "$FRAMEWORK/Versions/B/XPCServices/Installer.xpc"; do
+  codesign --force --sign "$IDENTITY" --options runtime --timestamp=none \
+    --preserve-metadata=entitlements "$HELPER"
+done
+codesign --force --sign "$IDENTITY" --options runtime --timestamp=none "$FRAMEWORK"
+
 codesign --force --sign "$IDENTITY" --options runtime \
   --entitlements "$OUT/Sunno.entitlements" "$APP"
 
@@ -244,6 +281,7 @@ rm -f "$ZIP"
 # ditto rather than zip, because it preserves the resource forks and symlinks a signed bundle
 # depends on. A bundle rebuilt from a plain `zip` can fail its own signature check.
 ditto -c -k --sequesterRsrc --keepParent "$APP" "$ZIP"
+bash "$ROOT/scripts/create-appcast.sh" "$ZIP"
 
 echo
 echo "    app  $APP  ($(du -sh "$APP" | cut -f1))"
