@@ -18,7 +18,7 @@ for BINARY in "$APP/Contents/MacOS/Sunno" \
               "$ENGINE/apple-speech-service/.build/release/apple-speech-service" \
               "$ENGINE/whisperkit-service/.build/release/whisperkit-service" \
               "$ENGINE/python/bin/python3"; do
-  lipo -verify_arch arm64 "$BINARY"
+  lipo "$BINARY" -verify_arch arm64
   codesign --verify --strict "$BINARY"
 done
 echo 'Loading the packaged speech runtime'
