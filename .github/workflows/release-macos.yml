@@ -44,6 +44,7 @@ jobs:
           python tests/test_release_signatures.py
           python tests/test_app_updater.py
       - name: Prepare temporary signing keychain
+        timeout-minutes: 3
         env:
           CERTIFICATE_BASE64: ${{ secrets.MACOS_SIGNING_P12_BASE64 }}
           CERTIFICATE_PASSWORD: ${{ secrets.MACOS_SIGNING_P12_PASSWORD }}
@@ -62,7 +63,10 @@ jobs:
           security set-key-partition-list -S apple-tool:,apple:,codesign: -s \
             -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN" >/dev/null
           security list-keychains -d user -s "$KEYCHAIN" "$HOME/Library/Keychains/login.keychain-db"
-          security add-trusted-cert -r trustRoot -p codeSign -k "$KEYCHAIN" config/MacReleaseSigning.pem
+          # This trust applies only to the disposable runner. Administrator trust
+          # avoids the interactive authorization required by per-user trust settings.
+          sudo security add-trusted-cert -d -r trustRoot -p codeSign \
+            -k /Library/Keychains/System.keychain config/MacReleaseSigning.pem
           IDENTITY="$(openssl x509 -in config/MacReleaseSigning.pem -noout -fingerprint -sha1 | cut -d= -f2 | tr -d ':')"
           security find-identity -v -p codesigning "$KEYCHAIN" | grep -F "$IDENTITY"
           echo "SUNNO_IDENTITY=$IDENTITY" >> "$GITHUB_ENV"
@@ -100,5 +104,6 @@ jobs:
       - name: Remove temporary signing credentials
         if: always()
         run: |
+          sudo security remove-trusted-cert -d config/MacReleaseSigning.pem 2>/dev/null || true
           security delete-keychain "$RUNNER_TEMP/sunno-release.keychain-db" 2>/dev/null || true
           rm -f "$RUNNER_TEMP/sunno-signing.p12"
