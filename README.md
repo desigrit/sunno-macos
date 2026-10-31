@@ -22,10 +22,10 @@ Read about the [product decisions and model judgment](#product-decisions-and-mod
 
 This is the Mac version of [Sunno](https://github.com/desigrit/sunno), which started on Windows.
 
-The next release is 1.0.92.0, matching the Windows release number. macOS bundle metadata
+Release 1.0.92.0 matches the Windows release number. macOS bundle metadata
 uses Apple's three-part version 1.0.92; Sunno's Settings and release downloads show 1.0.92.0.
 It adds a manual GitHub update check in Settings and the Sunno menu. See
-[release setup](docs/UPDATES.md) for the signing and packaging steps.
+[release setup](docs/UPDATES.md) for the GitHub Actions build and signing workflow.
 
 ## What it does
 
@@ -112,7 +112,7 @@ The next question is which captions people can comfortably follow. The [current 
 Apple Silicon, macOS 13.3 or later.
 
 **[Download Sunno for macOS](https://github.com/desigrit/sunno-macos/releases/latest)**, about
-80 MB. Unzip it and drag **Sunno** to your Applications folder. It carries its own Python and
+154 MB. Unzip it and drag **Sunno** to your Applications folder. It carries its own Python and
 speech service, so there is nothing else to install.
 
 **The first time you open it, macOS will refuse.** It will say Sunno "cannot be opened because
