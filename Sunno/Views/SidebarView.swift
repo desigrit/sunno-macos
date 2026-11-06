@@ -19,42 +19,74 @@ struct SidebarView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            speakerList
-            Divider()
-            modelSection
+            sidebarHeader
+            if settings.isSidebarCollapsed {
+                Spacer(minLength: 0)
+            } else {
+                speakerList
+                Divider()
+                modelSection
+            }
         }
-        .frame(minWidth: 200, idealWidth: 232, maxWidth: 300)
+        .frame(minWidth: settings.isSidebarCollapsed ? 40 : 200,
+               idealWidth: settings.isSidebarCollapsed ? 40 : 232,
+               maxWidth: settings.isSidebarCollapsed ? 40 : 300)
         .background(GeometryReader { proxy in
             Color.clear.onAppear { sidebarHeight = proxy.size.height }
                 .onChange(of: proxy.size.height) { sidebarHeight = $0 }
         })
     }
 
+    private var sidebarHeader: some View {
+        HStack(spacing: 0) {
+            if !settings.isSidebarCollapsed {
+                Text("Speakers")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(.secondary)
+                    .padding(.leading, 12)
+                Spacer(minLength: 8)
+            }
+            Button {
+                settings.isSidebarCollapsed.toggle()
+            } label: {
+                Image(systemName: settings.isSidebarCollapsed ? "chevron.right" : "chevron.left")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(.secondary)
+                    .frame(width: 32, height: 32)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.borderless)
+            .help(settings.isSidebarCollapsed ? "Expand sidebar" : "Collapse sidebar")
+            .accessibilityLabel(settings.isSidebarCollapsed ? "Expand sidebar" : "Collapse sidebar")
+        }
+        .padding(.horizontal, 4)
+        .padding(.top, 6)
+        .padding(.bottom, 4)
+    }
+
     private var speakerList: some View {
         List {
-            Section("Speakers") {
-                if store.speakers.isEmpty {
-                    Text("People appear here as they speak.")
-                        .font(.system(size: 11.5))
-                        .foregroundStyle(.tertiary)
-                        .listRowSeparator(.hidden)
-                } else {
-                    ForEach(store.speakers) { speaker in
-                        HStack(spacing: 9) {
-                            Circle()
-                                .fill(Theme.speaker(speaker.id))
-                                .frame(width: 9, height: 9)
-                            Text(speaker.sidebarLabel)
-                                .lineLimit(1)
-                                .truncationMode(.tail)
-                        }
-                        .contentShape(Rectangle())
-                        .contextMenu {
-                            Button("Edit…") { onRename(speaker) }
-                            Button("Delete") { onDelete(speaker) }
-                        }
-                        .accessibilityLabel(speaker.sidebarLabel)
+            if store.speakers.isEmpty {
+                Text("People appear here as they speak.")
+                    .font(.system(size: 11.5))
+                    .foregroundStyle(.tertiary)
+                    .listRowSeparator(.hidden)
+            } else {
+                ForEach(store.speakers) { speaker in
+                    HStack(spacing: 9) {
+                        Circle()
+                            .fill(Theme.speaker(speaker.id))
+                            .frame(width: 9, height: 9)
+                        Text(speaker.sidebarLabel)
+                            .lineLimit(1)
+                            .truncationMode(.tail)
                     }
+                    .contentShape(Rectangle())
+                    .contextMenu {
+                        Button("Edit…") { onRename(speaker) }
+                        Button("Delete") { onDelete(speaker) }
+                    }
+                    .accessibilityLabel(speaker.sidebarLabel)
                 }
             }
         }
