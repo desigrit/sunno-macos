@@ -22,9 +22,11 @@ Read about the [product decisions and model judgment](#product-decisions-and-mod
 
 This is the Mac version of [Sunno](https://github.com/desigrit/sunno), which started on Windows.
 
-Release 1.0.92.0 matches the Windows release number. macOS bundle metadata
-uses Apple's three-part version 1.0.92; Sunno's Settings and release downloads show 1.0.92.0.
-It adds a manual GitHub update check in Settings and the Sunno menu. See
+Release 1.0.93.0 matches the Windows release number. macOS bundle metadata
+uses Apple's three-part version 1.0.93; Sunno's Settings and release downloads show 1.0.93.0.
+The Apple Speech + Whisper mode starts captions while Whisper prepares corrections in the
+background. Cached model loading and deferred startup work help the engine become ready
+sooner. Update from Settings or the Sunno menu. See
 [release setup](docs/UPDATES.md) for the GitHub Actions build and signing workflow.
 
 ## What it does
