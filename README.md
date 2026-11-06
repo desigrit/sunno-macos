@@ -22,8 +22,9 @@ Read about the [product decisions and model judgment](#product-decisions-and-mod
 
 This is the Mac version of [Sunno](https://github.com/desigrit/sunno), which started on Windows.
 
-Release 1.0.93.0 matches the Windows release number. macOS bundle metadata
-uses Apple's three-part version 1.0.93; Sunno's Settings and release downloads show 1.0.93.0.
+Release 1.0.94.0 matches the Windows release number. macOS bundle metadata
+uses Apple's three-part version 1.0.94; Sunno's Settings and release downloads show 1.0.94.0.
+Collapse the speaker and model sidebar using the top-right chevron. It becomes a slim rail with an expand arrow, and Sunno remembers your choice.
 The Apple Speech + Whisper mode starts captions while Whisper prepares corrections in the
 background. Cached model loading and deferred startup work help the engine become ready
 sooner. Update from Settings or the Sunno menu. See
