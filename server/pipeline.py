@@ -98,6 +98,9 @@ class AsrWorker:
         self.incremental = callable(getattr(engine, "stream", None))
         self._decode_ms = 0.0
         self._corrector = getattr(engine, "corrector", None)
+        self._corrector_factory = getattr(engine, "create_corrector", None)
+        self._load_cancelled = threading.Event()
+        self._loader_thread = None
         self._corrections: deque[tuple[_Job, str]] = deque()
         self._correcting = False
         self._correction_error_reported = False
@@ -106,8 +109,37 @@ class AsrWorker:
 
     def start(self) -> None:
         self._thread.start()
-        if self._corrector is not None:
+        if self._corrector is not None or self._corrector_factory is not None:
             self._correction_thread.start()
+        if self._corrector_factory is not None:
+            self._loader_thread = threading.Thread(target=self._load_corrector,
+                                                   name="correction-load", daemon=True)
+            self._loader_thread.start()
+
+    def _load_corrector(self) -> None:
+        from .startup import startup
+
+        corrector = None
+        try:
+            with startup.measure("correction_load"):
+                corrector = self._corrector_factory(self._load_cancelled)
+            if self._load_cancelled.is_set():
+                return
+            with startup.measure("correction_warmup"):
+                corrector.warmup()
+            with self._lock:
+                if not self._stop:
+                    self._corrector = corrector
+                    corrector = None  # The worker now owns shutdown.
+                    self._lock.notify_all()
+        except Exception:
+            with self._lock:
+                if not self._stop:
+                    self._emit({"type": "error", "code": "correction_unavailable",
+                                "message": "Whisper corrections could not start. Apple Speech captions continue."})
+        finally:
+            if corrector is not None:
+                corrector.close()
 
     def stop(self) -> None:
         with self._lock:
@@ -115,8 +147,11 @@ class AsrWorker:
             self._generation += 1
             self._corrections.clear()
             self._lock.notify_all()
+        self._load_cancelled.set()
         self._thread.join(timeout=5)
-        if self._corrector is not None:
+        if self._loader_thread is not None:
+            self._loader_thread.join(timeout=5)
+        if self._correction_thread.ident is not None:
             self._correction_thread.join(timeout=5)
         for engine in (self._engine, self._corrector):
             close = getattr(engine, "close", None)
@@ -491,6 +526,9 @@ class CaptionPipeline:
             # Long monologue: immediately reopen so speech isn't dropped mid-sentence.
             self._vad.reset()
             self._begin_utterance()
+
+    def set_speaker(self, speaker) -> None:
+        self._speaker = speaker
 
     def _resolve_speaker(self, audio: np.ndarray) -> tuple[int | None, str | None]:
         """Identify the speaker for a completed utterance.

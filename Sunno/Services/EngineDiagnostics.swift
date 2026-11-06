@@ -23,6 +23,9 @@ final class EngineDiagnostics: @unchecked Sendable {
     private let maxLines = 60
     private let lock = NSLock()
     private var lines: [String] = []
+    private var pending = ""
+    private static let startupPattern = try! NSRegularExpression(pattern:
+        #"^\[startup\] stage=(imports_ready|hardware|control_ready|cache_lookup|model_load|model_warmup|pipeline_ready|capture_ready|speaker_load|recording_recovery|catalog|correction_load|correction_warmup) duration_ms=\d+ elapsed_ms=\d+ result=(ok|failed)$"#)
 
     private static let markers = [
         "[error]", "Traceback", "File \"", "ModuleNotFoundError", "ImportError",
@@ -106,28 +109,34 @@ final class EngineDiagnostics: @unchecked Sendable {
         return out
     }
 
-    func note(_ chunk: String) {
+    @discardableResult
+    func note(_ chunk: String) -> Bool {
         // One acquisition. `sensitive` is written from the main actor and read here on the
         // pipe's queue, so it has to be under the same lock as `lines`.
         lock.lock()
+        defer { lock.unlock() }
         let secrets = sensitive
-        lock.unlock()
-
+        pending += chunk
+        let complete = pending.components(separatedBy: "\n")
+        pending = String((complete.last ?? "").suffix(4096))
+        var ready = false
         var kept: [String] = []
-        for raw in chunk.split(separator: "\n", omittingEmptySubsequences: true) {
+        for raw in complete.dropLast() {
             let trimmed = raw.trimmingCharacters(in: .whitespaces)
             let looksLikeFailure = Self.markers.contains { trimmed.hasPrefix($0) }
                 || trimmed.hasSuffix("Error")
-            if looksLikeFailure {
+            let startup = Self.startupPattern.firstMatch(in: trimmed,
+                range: NSRange(trimmed.startIndex..., in: trimmed)) != nil
+            if startup && trimmed.hasPrefix("[startup] stage=control_ready ")
+                && trimmed.hasSuffix("result=ok") { ready = true }
+            if looksLikeFailure || startup {
                 // Truncated first, so one enormous line cannot fill the buffer on its own.
                 kept.append(scrub(String(raw.prefix(400)), secrets: secrets))
             }
         }
-        guard !kept.isEmpty else { return }
-        lock.lock()
         lines.append(contentsOf: kept)
         if lines.count > maxLines { lines.removeFirst(lines.count - maxLines) }
-        lock.unlock()
+        return ready
     }
 
     /// What the engine said before it died, or nil when it said nothing worth keeping.
@@ -142,6 +151,7 @@ final class EngineDiagnostics: @unchecked Sendable {
     func reset() {
         lock.lock()
         lines.removeAll()
+        pending = ""
         lock.unlock()
     }
 }

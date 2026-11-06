@@ -206,5 +206,97 @@ class IncrementalTests(unittest.TestCase):
             self.assertNotIn("_caption_key", lines[0])
 
 
+class BackgroundCorrectionStartupTests(unittest.TestCase):
+    def test_live_captions_start_before_corrector_load_and_warmup_finish(self):
+        from unittest.mock import Mock
+
+        loading, release, warming, ready = (threading.Event() for _ in range(4))
+        corrector = Corrector()
+        corrector.gate.set()
+        corrector.close = Mock()
+        def warmup():
+            warming.set()
+            ready.wait(3)
+        corrector.warmup = warmup
+        def factory(cancelled):
+            loading.set()
+            release.wait(3)
+            return corrector
+        engine = LiveEngine()
+        engine.create_corrector = factory
+        events = []
+        worker = AsrWorker(engine, events.append)
+        worker.start()
+        try:
+            self.assertTrue(loading.wait(1))
+            worker.submit_final(_Job(1, np.ones(16000, np.float32), True))
+            wait_for(lambda: any(e["type"] == "final" for e in events))
+            self.assertFalse(corrector.entered.is_set())
+            release.set()
+            self.assertTrue(warming.wait(1))
+            worker.submit_final(_Job(2, np.ones(16000, np.float32), True))
+            wait_for(lambda: any(e.get("id") == 2 for e in events))
+            self.assertFalse(corrector.entered.is_set())
+            ready.set()
+            wait_for(lambda: worker._corrector is corrector)
+            worker.submit_final(_Job(3, np.ones(16000, np.float32), True))
+            wait_for(lambda: any(e["type"] == "correction" for e in events))
+            self.assertEqual([e["id"] for e in events if e["type"] == "correction"], [3])
+        finally:
+            release.set()
+            ready.set()
+            worker.stop()
+        corrector.close.assert_called_once()
+
+    def test_correction_load_failure_leaves_native_captions_running(self):
+        def factory(cancelled):
+            raise RuntimeError("load failed")
+        engine = LiveEngine()
+        engine.create_corrector = factory
+        events = []
+        worker = AsrWorker(engine, events.append)
+        worker.start()
+        try:
+            wait_for(lambda: any(e.get("code") == "correction_unavailable" for e in events))
+            worker.submit_final(_Job(1, np.ones(16000, np.float32), True))
+            wait_for(lambda: any(e["type"] == "final" for e in events))
+            self.assertTrue(worker.drain(1))
+        finally:
+            worker.stop()
+
+    def test_stop_cancels_inflight_load_and_closes_late_result(self):
+        from unittest.mock import Mock
+
+        entered = threading.Event()
+        corrector = Mock()
+        def factory(cancelled):
+            entered.set()
+            cancelled.wait(2)
+            return corrector
+        engine = LiveEngine()
+        engine.create_corrector = factory
+        worker = AsrWorker(engine, lambda event: None)
+        worker.start()
+        self.assertTrue(entered.wait(1))
+        worker.stop()
+        self.assertIsNone(worker._corrector)
+        corrector.warmup.assert_not_called()
+        corrector.close.assert_called_once()
+        self.assertFalse(worker._loader_thread.is_alive())
+
+    def test_apple_primary_constructor_and_warmup_do_not_load_whisper(self):
+        from unittest.mock import Mock
+        from server.asr_apple import AppleSpeechEngine, HYBRID_MODEL
+
+        with patch("server.asr_whisperkit.WhisperKitEngine") as whisper, \
+             patch("server.asr_apple.SpeechService") as speech:
+            speech.return_value.call.return_value = {}
+            engine = AppleSpeechEngine(Settings(model_size=HYBRID_MODEL))
+            engine.warmup()
+            whisper.assert_not_called()
+            self.assertTrue(callable(engine.create_corrector))
+            engine.close()
+
+
 if __name__ == "__main__":
     unittest.main()

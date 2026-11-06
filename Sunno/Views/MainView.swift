@@ -256,7 +256,7 @@ struct MainView: View {
 
     private var emptyDetail: String {
         switch store.state {
-        case "starting", "loading": return "This takes about half a minute the first time."
+        case "starting", "loading": return "This may take a few seconds."
         default: return store.isRunning ? "Captions appear here as people speak." : ""
         }
     }

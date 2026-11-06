@@ -47,6 +47,7 @@ final class BackendHost: ObservableObject {
     /// because filtering it was attempted three times and each round found a way through;
     /// collecting nothing but tracebacks in the first place is the version of that lesson
     /// which still leaves something useful to send.
+    var onControlReady: (() -> Void)?
     @Published private(set) var failureDetail: String?
 
     /// Whether an engine has ever been asked for in this launch. `SunnoApp.startUp` is driven by
@@ -246,10 +247,15 @@ final class BackendHost: ObservableObject {
         let pipe = Pipe()
         task.standardOutput = pipe
         task.standardError = pipe
-        pipe.fileHandleForReading.readabilityHandler = { handle in
+        pipe.fileHandleForReading.readabilityHandler = { [weak self, weak task] handle in
             let data = handle.availableData
             guard !data.isEmpty else { return }
-            EngineDiagnostics.shared.note(String(decoding: data, as: UTF8.self))
+            if EngineDiagnostics.shared.note(String(decoding: data, as: UTF8.self)) {
+                Task { @MainActor [weak self, weak task] in
+                    guard let self, let task, self.process === task else { return }
+                    self.onControlReady?()
+                }
+            }
         }
 
         task.terminationHandler = { [weak self] finished in

@@ -139,10 +139,13 @@ class AppleSpeechEngine:
         self._id = None
         self._samples = 0
         self.corrector = None
-        if settings.model_size == HYBRID_MODEL:
-            from .asr_whisperkit import WhisperKitEngine
-            # No cross-utterance prompt from skipped/late correction jobs.
-            self.corrector = WhisperKitEngine(replace(settings, model_size="large-v3", use_context_prompt=False))
+        self.create_corrector = self._create_corrector if settings.model_size == HYBRID_MODEL else None
+
+    def _create_corrector(self, cancelled):
+        from .asr_whisperkit import WhisperKitEngine
+
+        return WhisperKitEngine(replace(self.settings, model_size="large-v3", use_context_prompt=False),
+                                cancelled=cancelled)
 
     def reset_stream(self):
         if self._service is not None:
@@ -187,8 +190,6 @@ class AppleSpeechEngine:
         self._service = SpeechService()
         self._service.call("begin")
         self.reset_stream()
-        if self.corrector is not None:
-            self.corrector.warmup()
         return (time.perf_counter() - start) * 1000
 
     def close(self):

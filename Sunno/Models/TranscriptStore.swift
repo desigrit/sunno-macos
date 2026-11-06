@@ -307,7 +307,7 @@ final class TranscriptStore: ObservableObject {
             // A capture problem is a warning: captions have stopped but the app has not.
             // Anything the engine could not name is an error, because an unrecognised
             // failure is the one most likely to mean nothing is working.
-            let known = ["mic_denied", "mic_unavailable", "capture_failed", "screen_denied", "correction_failed"]
+            let known = ["mic_denied", "mic_unavailable", "capture_failed", "screen_denied", "correction_failed", "correction_unavailable"]
             problem = Problem(message: event.message ?? "Something went wrong.",
                               code: event.code,
                               severity: known.contains(event.code ?? "") ? .warning : .error)

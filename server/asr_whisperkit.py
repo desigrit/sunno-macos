@@ -31,6 +31,7 @@ from __future__ import annotations
 import json
 import struct
 import subprocess
+import threading
 import time
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -188,8 +189,9 @@ class WhisperKitEngine:
     asks for them because that is what the per-word shading needs.
     """
 
-    def __init__(self, settings: "Settings") -> None:
+    def __init__(self, settings: "Settings", *, cancelled: threading.Event | None = None) -> None:
         self.settings = settings
+        self._closed = threading.Event()
         binary = service_binary()
         if binary is None:
             raise WhisperKitServiceError(
@@ -203,6 +205,19 @@ class WhisperKitEngine:
             # stderr is left attached so a Core ML failure is visible where the engine's other
             # output goes, rather than disappearing into a pipe nobody drains.
         )
+
+        if cancelled is not None:
+            # Cancellation must interrupt a blocked native load, not wait for it to finish.
+            def watch_cancel():
+                while not self._closed.wait(.1):
+                    if cancelled.is_set():
+                        try:
+                            if self._proc.poll() is None:
+                                self._proc.kill()
+                        except OSError:
+                            pass
+                        return
+            threading.Thread(target=watch_cancel, name="whisper-load-cancel", daemon=True).start()
 
         try:
             reply = self._call({
@@ -308,12 +323,17 @@ class WhisperKitEngine:
         proc = getattr(self, "_proc", None)
         if proc is None:
             return
+        self._closed.set()
         try:
-            if proc.stdin and not proc.stdin.closed:
-                proc.stdin.close()   # the service exits on end of stdin
-            proc.wait(timeout=5)
+            if proc.poll() is None:
+                proc.terminate()
+            proc.wait(timeout=1)
         except (OSError, subprocess.TimeoutExpired):
             proc.kill()
+            proc.wait(timeout=1)
+        for handle in (proc.stdin, proc.stdout):
+            if handle and not handle.closed:
+                handle.close()
 
     def __del__(self) -> None:
         try:

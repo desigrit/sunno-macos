@@ -120,6 +120,7 @@ struct SunnoApp: App {
             updater.recordingStateChanged()
             return false
         }
+        backend.onControlReady = { client.serverReady() }
         client.onConnected = { inputs.reconnected() }
         client.onEvent = { event in
             guard inputs.apply(event) else { return }

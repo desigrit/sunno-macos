@@ -34,6 +34,14 @@ final class CaptionClient: ObservableObject {
         openSocket()
     }
 
+    func serverReady() {
+        guard shouldRun, case .waiting = connection else { return }
+        retry?.cancel()
+        retry = nil
+        attempt = 0
+        openSocket()
+    }
+
     func disconnect() {
         generation += 1
         shouldRun = false

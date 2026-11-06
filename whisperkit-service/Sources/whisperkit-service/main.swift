@@ -165,7 +165,17 @@ func load(_ model: String, base: URL?) async throws {
     // per chip generation, and overriding it here would mean re-deriving that choice for
     // every Mac rather than letting the runtime do what it is for.
     let compute = ModelComputeOptions()
-    let config = WhisperKitConfig(model: model, downloadBase: base, computeOptions: compute)
+    guard let base else {
+        throw NSError(domain: "Sunno", code: 1,
+                      userInfo: [NSLocalizedDescriptionKey: "The model cache is unavailable. Retry model setup."])
+    }
+    let folder = modelFolder(base: base, variant: model)
+    guard FileManager.default.fileExists(atPath: folder.path) else {
+        throw NSError(domain: "Sunno", code: 1,
+                      userInfo: [NSLocalizedDescriptionKey: "The model is not downloaded. Retry model setup."])
+    }
+    let config = WhisperKitConfig(model: model, downloadBase: base, modelFolder: folder.path,
+                                  computeOptions: compute, download: false)
     whisper = try await WhisperKit(config)
     loadedModel = model
 }
