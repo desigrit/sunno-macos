@@ -37,17 +37,11 @@ final class BackendHost: ObservableObject {
     /// alternative was reporting "the speech engine stopped" underneath a recovery already
     /// in progress, which reads as two faults where there is one.
     var onFailure: (() -> Bool)?
+    var onControlReady: (() -> Void)?
 
     /// The engine's own diagnostic output, for a bug report. Never the transcript.
     ///
-    /// Built as an allow-list, exactly as the diagnostics export is, and for the same reason:
-    /// this is text the user may hand to a stranger. Only lines that look like a Python
-    /// failure are kept, so a future engine that decided to print a caption could not leak
-    /// one through here. The Windows build excludes its whole engine log from diagnostics
-    /// because filtering it was attempted three times and each round found a way through;
-    /// collecting nothing but tracebacks in the first place is the version of that lesson
-    /// which still leaves something useful to send.
-    var onControlReady: (() -> Void)?
+    /// Includes numeric startup timings and scrubbed failures accepted by EngineDiagnostics.
     @Published private(set) var failureDetail: String?
 
     /// Whether an engine has ever been asked for in this launch. `SunnoApp.startUp` is driven by
@@ -242,8 +236,8 @@ final class BackendHost: ObservableObject {
 
         // stdout is read and scanned rather than inherited. The backend prints latency and
         // speaker ids but never transcript text, and inheriting would put it in the system
-        // log where nobody chose to keep it. Only lines that look like a failure are kept,
-        // so "Copy details" has something to offer without holding on to the rest.
+        // log where nobody chose to keep it. Only startup timings and failures are kept,
+        // so "Copy details" can explain startup without retaining ordinary output.
         let pipe = Pipe()
         task.standardOutput = pipe
         task.standardError = pipe

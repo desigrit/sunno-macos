@@ -297,6 +297,60 @@ class BackgroundCorrectionStartupTests(unittest.TestCase):
             self.assertTrue(callable(engine.create_corrector))
             engine.close()
 
+    def test_correction_warmup_failure_closes_model_and_keeps_native_captions(self):
+        from unittest.mock import Mock
+
+        corrector = Mock()
+        corrector.warmup.side_effect = RuntimeError("warmup failed")
+        engine = LiveEngine()
+        engine.create_corrector = lambda cancelled: corrector
+        events = []
+        worker = AsrWorker(engine, events.append)
+        worker.start()
+        try:
+            wait_for(lambda: any(e.get("code") == "correction_unavailable" for e in events))
+            worker._loader_thread.join(1)
+            corrector.close.assert_called_once()
+            worker.submit_final(_Job(1, np.ones(16000, np.float32), True))
+            wait_for(lambda: any(e["type"] == "final" for e in events))
+        finally:
+            worker.stop()
+
+    def test_whisper_service_cancellation_interrupts_blocked_model_load(self):
+        import io
+        from unittest.mock import Mock
+        from server.asr_whisperkit import WhisperKitEngine, WhisperKitServiceError
+
+        entered, killed, cancelled = (threading.Event() for _ in range(3))
+        proc = Mock(stdin=io.BytesIO(), stdout=io.BytesIO())
+        proc.poll.side_effect = lambda: 1 if killed.is_set() else None
+        proc.kill.side_effect = killed.set
+        def blocked(*args, **kwargs):
+            entered.set()
+            if not killed.wait(2):
+                raise AssertionError("Cancellation did not stop the native load")
+            raise WhisperKitServiceError("service closed")
+        errors = []
+        def load():
+            try:
+                WhisperKitEngine(Settings(), cancelled=cancelled)
+            except Exception as exc:
+                errors.append(exc)
+        with patch("server.asr_whisperkit.service_binary", return_value=Path("fake-helper")), \
+             patch("server.asr_whisperkit.subprocess.Popen", return_value=proc), \
+             patch.object(WhisperKitEngine, "_call", side_effect=blocked):
+            loader = threading.Thread(target=load)
+            loader.start()
+            self.assertTrue(entered.wait(1))
+            cancelled.set()
+            loader.join(3)
+        self.assertFalse(loader.is_alive())
+        self.assertTrue(killed.is_set())
+        self.assertEqual(len(errors), 1)
+        self.assertIsInstance(errors[0], WhisperKitServiceError)
+        self.assertTrue(proc.stdin.closed)
+        self.assertTrue(proc.stdout.closed)
+
 
 if __name__ == "__main__":
     unittest.main()

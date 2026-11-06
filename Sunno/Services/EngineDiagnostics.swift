@@ -1,16 +1,8 @@
 import Foundation
 
-/// A bounded tail of the engine's failure output, for a bug report.
-///
-/// **An allow-list, not a filter**, which is the same decision the diagnostics export is
-/// built on and taken for the same reason: this is text a user may hand to a stranger. Only
-/// lines that look like a Python failure are kept, so an engine that one day decided to print
-/// a caption could not leak one through here.
-///
-/// The Windows build excludes its engine log from diagnostics entirely, because filtering it
-/// was designed three times and every round found a way through. Collecting nothing but
-/// tracebacks in the first place is that lesson applied earlier, and it still leaves a
-/// maintainer something to read.
+/// A bounded history of startup timings and engine failures for diagnostics.
+/// Timing records accept only fixed stage names and numbers. Failure records are
+/// scrubbed of paths and device names. Ordinary engine output is discarded.
 ///
 /// Its own type rather than statics on `BackendHost`, which is `@MainActor`: this is written
 /// from the pipe's reader queue and read from the main actor, and an isolated static would be

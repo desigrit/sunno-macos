@@ -93,8 +93,8 @@ private struct EnginePane: View {
         Form {
             Toggle("Use the processor instead of the GPU and Neural Engine",
                    isOn: $settings.forceCPU)
-            Text("Slower, but a way back in if the engine stops starting. Reloads the model, "
-                 + "which takes about half a minute.")
+            Text("Slower, but a way back in if the engine stops starting. Reloads the model. "
+                 + "This may take a few seconds.")
                 .font(.system(size: 11.5))
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
