@@ -1,8 +1,19 @@
 name: Multilingual captions
 on:
   workflow_dispatch:
-  push:
-    branches: [codex/spoken-languages]
+  pull_request:
+    paths:
+      - 'Sunno/**'
+      - 'server/**'
+      - 'apple-speech-service/**'
+      - 'whisperkit-service/**'
+      - 'tests/swift/LanguagePickerRendering.swift'
+      - 'tests/*multilingual*.py'
+      - 'tests/test_spoken_languages.py'
+      - 'tests/test_local_translation.py'
+      - 'tests/fleurs_samples.py'
+      - 'tests/fixtures/edacc/**'
+      - '.github/workflows/multilingual.yml'
 permissions:
   contents: read
 jobs:
