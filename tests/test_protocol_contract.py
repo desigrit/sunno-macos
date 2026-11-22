@@ -57,6 +57,19 @@ SERVER = ROOT / "server"
 # only once there is a model and a device, and `error` carries `code` and `detail` only when
 # the failure is one the UI can offer a fix for.
 SCHEMA: dict[str, dict] = {
+    "spoken_language": {
+        "fields": ["model", "choices", "selected", "detected", "accepted", "preparing", "message"],
+        "optional": ["detected", "accepted", "preparing", "message"],
+        "note": "Effective language and explicit preference acknowledgements.",
+    },
+    "translation_state": {
+        "fields": ["choices", "selected", "phase", "accepted", "message"],
+        "optional": ["accepted", "message"], "note": "Local translator readiness.",
+    },
+    "translation": {
+        "fields": ["id", "started_at", "language", "target_language", "text", "original"],
+        "optional": [], "note": "Completed translation for a specific original caption.",
+    },
     "correction": {
         "fields": ["id", "text", "speaker_id", "speaker", "clarity", "latency_ms",
                    "duration_s", "started_at", "words"],
@@ -165,7 +178,7 @@ COMMANDS = {
     "start", "stop", "toggle", "download_model", "list_models",
     "rename_speaker", "set_self", "merge_speakers", "delete_speaker", "reset_speakers",
     "start_recording", "stop_recording",
-    "set_input", "devices_changed",
+    "set_input", "devices_changed", "set_language", "translate_to",
 }
 
 # Entries in a catalog list, from models.catalog_with_status. Documentation only: this one is
@@ -334,6 +347,7 @@ def emitted_types() -> dict[str, set[str]]:
     for path in _sources():
         text = path.read_text(encoding="utf-8")
         names = set(literal.findall(text))
+        names.update(re.findall(r'dict\(type="([a-z_]+)"', text))
         for a, b in conditional.findall(text):
             names.update((a, b))
         # Shared caption serializer: read its literal call-site kinds as well as dicts.

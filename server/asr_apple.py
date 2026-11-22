@@ -47,9 +47,9 @@ class SpeechService:
         self.proc = subprocess.Popen([str(binary)], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                      stderr=subprocess.DEVNULL, bufsize=0)
 
-    def call(self, op: str, audio=None, final=False, timeout=20.0):
+    def call(self, op: str, audio=None, final=False, timeout=20.0, locale=None):
         payload = b"" if audio is None else np.asarray(audio, dtype="<f4").tobytes()
-        header = json.dumps({"op": op, "samples": len(payload) // 4, "final": final}).encode()
+        header = json.dumps({"op": op, "samples": len(payload) // 4, "final": final, "locale": locale}).encode()
         deadline = time.monotonic() + timeout
         try:
             # Bound both writes and reads. A hung helper cannot wedge the worker forever.
@@ -100,12 +100,39 @@ class SpeechService:
                 handle.close()
 
 
-def model_is_available(model_id: str) -> bool:
+def supported_locales(model_id):
+    from .spoken_language import root_language, whisper_codes
+    service = SpeechService()
+    try:
+        inventory = service.call("locales")
+        locales = sorted(set(inventory["supported"]))
+        if model_id == HYBRID_MODEL:
+            locales = [c for c in locales if root_language(c) in whisper_codes("large-v3")]
+        return locales
+    finally:
+        service.close()
+
+
+def prepare_locale(locale):
+    service = SpeechService()
+    try:
+        if not service.call("prepare", timeout=600, locale=locale).get("available"):
+            raise RuntimeError("The speech language is not ready. Select it again to retry setup.")
+    finally:
+        service.close()
+
+
+def model_is_available(model_id: str, language="en") -> bool:
     if not is_supported_os() or service_binary() is None:
         return False
     service = SpeechService()
     try:
-        available = service.call("status", timeout=10).get("available", False)
+        from .spoken_language import resolve
+        locales = supported_locales(model_id)
+        if not locales:
+            return False
+        locale = resolve(language, locales)
+        available = service.call("status", locale=locale, timeout=10).get("available", False)
     except Exception:
         return False
     finally:
@@ -116,13 +143,12 @@ def model_is_available(model_id: str) -> bool:
     return bool(available)
 
 
-def download_model(model_id: str, on_progress=None):
-    service = SpeechService()
-    try:
-        if not service.call("prepare", timeout=600).get("available"):
-            raise RuntimeError("Apple's English model is not ready. Retry model setup.")
-    finally:
-        service.close()
+def download_model(model_id: str, on_progress=None, language="en"):
+    from .spoken_language import resolve
+    locales = supported_locales(model_id)
+    if not locales:
+        raise RuntimeError("Apple Speech has no supported languages on this Mac. Choose a Whisper model to start captioning.")
+    prepare_locale(resolve(language, locales))
     if model_id == HYBRID_MODEL:
         from .asr_whisperkit import download_model as download_whisper
         download_whisper("large-v3", on_progress)
@@ -132,8 +158,7 @@ def download_model(model_id: str, on_progress=None):
 
 class AppleSpeechEngine:
     def __init__(self, settings: Settings):
-        if settings.language not in ("en", "en-US", "en_US"):
-            raise ValueError("Apple Speech currently supports English in Sunno. Select --language en.")
+        self._locale = settings.language or "en-US"
         self.settings = settings
         self._service = None
         self._id = None
@@ -141,10 +166,15 @@ class AppleSpeechEngine:
         self.corrector = None
         self.create_corrector = self._create_corrector if settings.model_size == HYBRID_MODEL else None
 
+    def set_language(self, language):
+        self._locale = language
+
     def _create_corrector(self, cancelled):
         from .asr_whisperkit import WhisperKitEngine
 
-        return WhisperKitEngine(replace(self.settings, model_size="large-v3", use_context_prompt=False),
+        from .spoken_language import root_language
+        return WhisperKitEngine(replace(self.settings, model_size="large-v3", language=root_language(self._locale),
+                                        use_context_prompt=False),
                                 cancelled=cancelled)
 
     def reset_stream(self):
@@ -164,7 +194,7 @@ class AppleSpeechEngine:
                 self._service = SpeechService()
                 self._id = None
             if self._id != utterance_id:
-                self._service.call("begin")
+                self._service.call("begin", locale=self._locale)
                 self._id = utterance_id
                 self._samples = 0
             response = self._service.call("push", audio, final=is_final)
@@ -188,7 +218,7 @@ class AppleSpeechEngine:
     def warmup(self):
         start = time.perf_counter()
         self._service = SpeechService()
-        self._service.call("begin")
+        self._service.call("begin", locale=self._locale)
         self.reset_stream()
         return (time.perf_counter() - start) * 1000
 

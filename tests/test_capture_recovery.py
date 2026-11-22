@@ -777,7 +777,7 @@ class ServerIntegrationTests(unittest.IsolatedAsyncioTestCase):
                 managers.append(self)
 
         class Pipeline:
-            def __init__(self, settings, model, emit, should_run, speaker, on_audio):
+            def __init__(self, settings, model, emit, should_run, speaker, on_audio, languages=None):
                 self.on_audio = on_audio
                 self.closed = False
                 pipelines.append(self)
@@ -826,6 +826,8 @@ class ServerIntegrationTests(unittest.IsolatedAsyncioTestCase):
                 await ws.send("[]")  # A malformed command cannot drop the connection.
                 await ws.send(json.dumps({"cmd": "start_recording"}))
                 recording = await receive("recording", state="recording")
+                await ws.send(json.dumps({"cmd": "set_language", "language": "fr"}))
+                await receive("spoken_language", selected="fr", accepted="fr")
                 await ws.send(json.dumps({"cmd": "set_input", "request_id": "switch",
                                           "target": target("b").to_dict()}))
                 ready = await receive("input", request_id="switch", state="ready")
@@ -840,6 +842,7 @@ class ServerIntegrationTests(unittest.IsolatedAsyncioTestCase):
                 self.assertFalse(selected["running"])
                 await ws.close()
                 ws = await connect(f"ws://127.0.0.1:{port}")
+                await receive("spoken_language", selected="fr")
                 replay = await receive("input", state="selected", request_id="paused")
                 self.assertFalse(replay["wanted"])
                 resumed_recording = await receive("recording", state="recording")

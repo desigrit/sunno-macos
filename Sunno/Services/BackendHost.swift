@@ -135,7 +135,7 @@ final class BackendHost: ObservableObject {
     func start(model: String?, device: Int?, loopbackDevice: Int?, pcmPort: UInt16? = nil,
                forceCPU: Bool, recordingsPath: String? = nil,
                resumeRecording: String? = nil, input: AudioInputTarget? = nil,
-               startStopped: Bool = false) {
+               startStopped: Bool = false, spokenLanguage: String = "en", translateTo: String = "off") {
         guard process == nil else { return }
 
         // Attach to an engine somebody else started, rather than starting one.
@@ -171,6 +171,7 @@ final class BackendHost: ObservableObject {
         var arguments = ["-m", "server.app",
                          "--http-port", String(httpPort),
                          "--ws-port", String(wsPort)]
+        arguments.append(contentsOf: ["--language", spokenLanguage, "--translate-to", translateTo])
         if let model { arguments.append(contentsOf: ["--model", model]) }
         if let input {
             arguments.append(contentsOf: ["--input-kind", input.kind])

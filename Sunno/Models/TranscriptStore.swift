@@ -26,6 +26,8 @@ struct CaptionLine: Identifiable, Equatable {
     var id: String { "\(generation).\(utteranceId)" }
 
     var text: String
+    var translation: String? = nil
+    var displayedText: String { translation ?? text }
     var speakerId: Int?
     var isFinal: Bool
     var clarity: Int?
@@ -87,6 +89,13 @@ final class TranscriptStore: ObservableObject {
     @Published private(set) var isRunning: Bool = false
     @Published private(set) var wantedRunning: Bool = false
     private var inputOwnsProblem = false
+    @Published private(set) var spokenChoices: [String] = []
+    @Published private(set) var translationChoices: [String] = []
+    @Published private(set) var spokenLanguage = "en"
+    @Published private(set) var translationTarget = "off"
+    @Published private(set) var detectedLanguage: String?
+    @Published private(set) var preparingLocale: String?
+    @Published private(set) var preparingTranslation = false
     @Published private(set) var activeModel: String?
     /// The audio device name, held for display only. Deliberately never written to a log or
     /// into the diagnostics export: "Headset (R-Phonak hearing aid)" is health information
@@ -110,6 +119,10 @@ final class TranscriptStore: ObservableObject {
         for index in lines.indices where lines[index].frozenSpeaker == nil {
             lines[index].frozenSpeaker = speaker(lines[index].speakerId)
         }
+        spokenChoices = []
+        translationChoices = []
+        preparingLocale = nil
+        detectedLanguage = nil
         generation += 1
     }
 
@@ -245,6 +258,27 @@ final class TranscriptStore: ObservableObject {
                 }
             }
 
+        case .spokenLanguage:
+            spokenChoices = event.choices ?? []
+            spokenLanguage = event.selected ?? "en"
+            detectedLanguage = event.detected
+            preparingLocale = event.preparing
+            if let message = event.message { reportProblem(message, code: nil) }
+        case .translationState:
+            translationChoices = event.choices ?? []
+            let selected = event.selected ?? "off"
+            if selected != translationTarget {
+                for index in lines.indices { lines[index].translation = nil }
+            }
+            translationTarget = selected
+            preparingTranslation = event.phase == "preparing"
+            if let message = event.message { reportProblem(message, code: nil) }
+        case .translation:
+            if event.targetLanguage == translationTarget, let at = event.startedAt,
+               let index = lines.firstIndex(where: { line in
+                   line.generation == generation && line.utteranceId == event.id && line.isFinal &&
+                   line.text == event.original && abs((line.startedAt?.timeIntervalSince1970 ?? 0) - at) < 0.001
+               }) { lines[index].translation = event.text }
         case .speechStart:
             break   // No visual today. Kept for latency work; see the contract test.
 
@@ -342,6 +376,7 @@ final class TranscriptStore: ObservableObject {
             if event.kind == .correction, let time = event.startedAt,
                let original = lines[index].startedAt,
                abs(original.timeIntervalSince1970 - time) > 0.001 { return }
+            if event.text != lines[index].text { lines[index].translation = nil }
             lines[index].text = event.text ?? lines[index].text
             lines[index].isFinal = (event.kind != .partial)
             lines[index].clarity = event.clarity

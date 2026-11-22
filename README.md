@@ -22,8 +22,7 @@ Read about the [product decisions and model judgment](#product-decisions-and-mod
 
 This is the Mac version of [Sunno](https://github.com/desigrit/sunno), which started on Windows.
 
-Release 1.0.94.0 matches the Windows release number. macOS bundle metadata
-uses Apple's three-part version 1.0.94; Sunno's Settings and release downloads show 1.0.94.0.
+Release 1.0.95.0 matches the Windows release number. The macOS bundle version is 1.0.95.
 Collapse the speaker and model sidebar using the top-right chevron. It becomes a slim rail with an expand arrow, and Sunno remembers your choice.
 The Apple Speech + Whisper mode starts captions while Whisper prepares corrections in the
 background. Cached model loading and deferred startup work help the engine become ready
@@ -31,6 +30,18 @@ sooner. Update from Settings or the Sunno menu. See
 [release setup](docs/UPDATES.md) for the GitHub Actions build and signing workflow.
 
 ## What it does
+
+### Spoken language and translation
+
+Under **Speech model**, open **Spoken language** to search by language name. English is the default.
+Choose a language to keep captions in it, or choose **Auto** on a multilingual Whisper model.
+Auto shows the language it detects and waits for sustained speech before switching. English-only
+models show English. Sunno remembers your preference when you return to a compatible model.
+
+Choose **Translate to** to read completed phrases in another language. The first use downloads
+a 638 MB translation model. Recognition and translation run on your device. Saved transcripts
+keep the original words and timestamps alongside completed translations.
+
 
 Point it at a microphone and it writes down what people are saying, as they say it. Put it near
 the table at dinner, beside you in a meeting, or pass a small mic to whoever is talking.

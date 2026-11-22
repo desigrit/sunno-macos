@@ -36,6 +36,9 @@ struct BackendEvent: Decodable {
         case final
         case correction
         case discard
+        case spokenLanguage = "spoken_language"
+        case translationState = "translation_state"
+        case translation
         case speechStart = "speech_start"
         case level
         case roster
@@ -117,6 +120,8 @@ struct BackendEvent: Decodable {
     let catalog: [CatalogEntry]?
 
     // download_*
+    let choices: [String]?
+    let selected, detected, accepted, preparing, phase, targetLanguage, original: String?
     let model: String?
     let downloaded: Int?
     let total: Int?
@@ -130,6 +135,8 @@ struct BackendEvent: Decodable {
     let detail: String?
 
     enum CodingKeys: String, CodingKey {
+        case choices, selected, detected, accepted, preparing, phase, original
+        case targetLanguage = "target_language"
         case kind = "type"
         case state, running, device, id, text, wanted, target, active, committed
         case requestID = "request_id"
@@ -196,6 +203,8 @@ enum BackendCommand {
     case start
     case stop
     case toggle
+    case setLanguage(String)
+    case translateTo(String)
     case setInput(AudioInputTarget, requestID: String)
     case devicesChanged
     case listModels
@@ -216,6 +225,10 @@ enum BackendCommand {
             return ["cmd": "stop"]
         case .toggle:
             return ["cmd": "toggle"]
+        case .setLanguage(let code):
+            return ["cmd": "set_language", "language": code]
+        case .translateTo(let code):
+            return ["cmd": "translate_to", "language": code]
         case .setInput(let target, let requestID):
             guard let data = try? JSONEncoder().encode(target),
                   let wire = try? JSONSerialization.jsonObject(with: data) else { return [:] }

@@ -1,0 +1,56 @@
+name: Multilingual captions
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - 'Sunno/**'
+      - 'server/**'
+      - 'apple-speech-service/**'
+      - 'whisperkit-service/**'
+      - 'tests/swift/LanguagePickerRendering.swift'
+      - 'tests/*multilingual*.py'
+      - 'tests/test_spoken_languages.py'
+      - 'tests/test_local_translation.py'
+      - 'tests/fleurs_samples.py'
+      - 'tests/fixtures/edacc/**'
+      - '.github/workflows/multilingual.yml'
+permissions:
+  contents: read
+jobs:
+  apple-silicon:
+    runs-on: macos-26
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install numpy av onnxruntime sentencepiece==0.2.1 huggingface_hub
+      - name: Render light and dark native language controls
+        run: |
+          swiftc Sunno/Theme.swift Sunno/Views/{LanguageChoiceRow,CaptionTextView}.swift \
+            Sunno/Models/{TranscriptStore,AudioMeter,SessionClock}.swift Sunno/Protocol/Events.swift \
+            tests/swift/LanguagePickerRendering.swift -o "$RUNNER_TEMP/picker"
+          "$RUNNER_TEMP/picker" picker-images
+      - uses: actions/upload-artifact@v4
+        with:
+          name: swiftui-language-pickers
+          path: picker-images
+          retention-days: 1
+      - run: swift build -c release --package-path apple-speech-service
+      - run: swift build -c release --package-path whisperkit-service
+      - name: Check Apple locale inventory and Whisper language policy
+        run: |
+          python tests/test_spoken_languages.py
+          python -c "from server.asr_apple import supported_locales; print(supported_locales('apple-speech'))"
+      - name: Measure native WhisperKit and check saved captions
+        run: python tests/benchmark_multilingual.py --engine whisperkit --fixtures "$RUNNER_TEMP/fleurs" --report report.json --download
+      - name: Verify local French to Portuguese translation
+        run: python tests/test_local_translation.py --real
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: macos-arm64-language-results
+          path: report.json
+          retention-days: 1
+

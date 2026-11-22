@@ -348,12 +348,12 @@ def catalog_with_status(device: str | None = None) -> list[dict]:
         # No fabricated delay or byte count for an OS-managed model. These are explicit
         # choices, not new defaults, so existing installs keep their chosen Whisper model.
         for model_id, name, detail, size in (
-            (asr_apple.NATIVE_MODEL, "Apple Speech", "On-device English streaming. Delay not measured yet.", 0),
+            (asr_apple.NATIVE_MODEL, "Apple Speech", "On-device streaming in supported Apple Speech languages.", 0),
             (asr_apple.HYBRID_MODEL, "Apple Speech + Whisper",
-             "Live English captions, then large-v3 corrections. Uses more memory and power.", 3090),
+             "Live Apple captions with large-v3 corrections. Uses more memory and power.", 3090),
         ):
             entries.append(dict(id=model_id, name=name, detail=detail, approx_mb=size,
-                                languages="English", available=asr_apple.model_is_available(model_id),
+                                languages="System locales", available=asr_apple.model_is_available(model_id),
                                 lag_ms=0, lag_text="Not measured yet", responsive=False, auto_select=False))
     return entries
 

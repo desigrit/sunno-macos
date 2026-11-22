@@ -70,6 +70,7 @@ function renderLine(el, msg, isFinal) {
 
   const text = document.createElement('span');
   text.className = 'text';
+  text.dir = "auto";
   text.textContent = msg.text;
   el.appendChild(text);
 

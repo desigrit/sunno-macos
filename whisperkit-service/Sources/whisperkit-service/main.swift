@@ -30,6 +30,7 @@ struct Request: Decodable {
     var downloadBase: String?
     var samples: Int?
     var language: String?
+    var prompt: String?
     var wordTimestamps: Bool?
     var temperature: Float?
     /// The hallucination suppression from config.py. Without these Whisper decodes silence and
@@ -41,7 +42,7 @@ struct Request: Decodable {
     var compressionRatioThreshold: Float?
 
     enum CodingKeys: String, CodingKey {
-        case op, model, samples, language, temperature
+        case op, model, samples, language, prompt, temperature
         case wordTimestamps = "word_timestamps"
         case downloadBase = "download_base"
         case noSpeechThreshold = "no_speech_threshold"
@@ -77,13 +78,32 @@ struct Reply: Encodable {
     /// arrives without it, which is the terminal one.
     var progress: Double?
     var available: Bool?
+    var language: String?
+    var probability: Float?
 
     enum CodingKeys: String, CodingKey {
-        case ok, error, text, words, model, progress, available
+        case ok, error, text, words, model, progress, available, language, probability
         case avgLogprob = "avg_logprob"
         case decodeMs = "decode_ms"
         case computeUnits = "compute_units"
         case computeDetail = "compute_detail"
+    }
+}
+
+/// A fourth token must not recreate an entire four-token sequence from this decode.
+struct HindiRepeatFilter: LogitsFiltering {
+    let firstSpecialToken: Int
+
+    func filterLogits(_ logits: MLMultiArray, withTokens tokens: [Int]) -> MLMultiArray {
+        let start = (tokens.lastIndex { $0 >= firstSpecialToken } ?? -1) + 1
+        let tail = tokens.count - 3
+        guard start < tail else { return logits }
+        var blocked = Set<Int>()
+        for index in start..<tail where tokens[index..<(index + 3)].elementsEqual(tokens[tail...]) {
+            blocked.insert(tokens[index + 3])
+        }
+        guard !blocked.isEmpty else { return logits }
+        return SuppressTokensFilter(suppressTokens: Array(blocked)).filterLogits(logits, withTokens: tokens)
     }
 }
 
@@ -232,6 +252,15 @@ func handle(_ request: Request, audio: [Float]) async -> Reply {
             return Reply(ok: false, error: "could not load \(model): \(error)")
         }
 
+    case "detect_language":
+        guard let whisper else { return Reply(ok: false, error: "No speech model loaded.") }
+        do {
+            let result = try await whisper.detectLangauge(audioArray: audio)
+            let probability = result.langProbs[result.language].map { exp($0) } ?? 0
+            return Reply(ok: true, language: result.language, probability: probability)
+        } catch {
+            return Reply(ok: false, error: error.localizedDescription)
+        }
     case "transcribe":
         guard let whisper else {
             return Reply(ok: false, error: "no model loaded")
@@ -240,9 +269,23 @@ func handle(_ request: Request, audio: [Float]) async -> Reply {
         // Without this the text arrives as "<|startoftranscript|><|en|><|transcribe|><|0.00|>
         // The measurement microphone...", and a caption is not the place to discover that.
         var options = DecodingOptions(
-            language: request.language ?? "en",
+            language: request.language,
             temperature: request.temperature ?? 0
         )
+        let previousFilters = whisper.textDecoder.logitsFilters
+        if let prompt = request.prompt, let tokenizer = whisper.tokenizer {
+            options.promptTokens = tokenizer.encode(text: " " + prompt)
+            whisper.textDecoder.logitsFilters = (previousFilters ?? []) + [
+                HindiRepeatFilter(firstSpecialToken: tokenizer.specialTokens.endToken)
+            ]
+        }
+        defer { whisper.textDecoder.logitsFilters = previousFilters }
+        // Provisional captions have one decoding pass. A small Hindi model also
+        // keeps greedy decoding on finalization: warm fallback sampling can turn
+        // the same Hindi utterance into different, unrelated short captions.
+        if request.wordTimestamps != true || request.prompt != nil {
+            options.temperatureFallbackCount = 0
+        }
         options.skipSpecialTokens = true
         options.withoutTimestamps = true
         options.wordTimestamps = request.wordTimestamps ?? false

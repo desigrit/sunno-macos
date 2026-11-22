@@ -125,6 +125,10 @@ struct SunnoApp: App {
         client.onEvent = { event in
             guard inputs.apply(event) else { return }
             store.apply(event)
+            if let accepted = event.accepted {
+                if event.kind == .spokenLanguage { settings.spokenLanguage = accepted }
+                if event.kind == .translationState { settings.translateTo = accepted }
+            }
             recording.apply(event)
             updater.recordingStateChanged()
             applyModelSwitch(event)
@@ -165,7 +169,8 @@ struct SunnoApp: App {
         backend.start(model: model ?? settings.selectedModel, device: nil, loopbackDevice: nil,
                       forceCPU: settings.forceCPU, recordingsPath: settings.recordingsPath,
                       resumeRecording: recording.activeFolder, input: settings.inputTarget,
-                      startStopped: startStopped ?? !inputs.wanted)
+                      startStopped: startStopped ?? !inputs.wanted,
+                      spokenLanguage: settings.spokenLanguage, translateTo: settings.translateTo)
     }
 
     private func refreshDevices() {

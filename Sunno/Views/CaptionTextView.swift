@@ -22,6 +22,8 @@ struct CaptionTextView: NSViewRepresentable {
 
     func makeNSView(context: Context) -> NSTextView {
         let view = WordHoverTextView()
+        view.baseWritingDirection = .natural
+        view.alignment = .natural
         view.isEditable = false
         view.isSelectable = true
         view.drawsBackground = false
@@ -36,7 +38,7 @@ struct CaptionTextView: NSViewRepresentable {
 
     func updateNSView(_ view: NSTextView, context: Context) {
         guard let hoverView = view as? WordHoverTextView else { return }
-        hoverView.words = line.words
+        hoverView.words = line.translation == nil ? line.words : []
         hoverView.textStorage?.setAttributedString(attributed())
         hoverView.alphaValue = opacity
         hoverView.invalidateIntrinsicContentSize()
@@ -75,8 +77,8 @@ struct CaptionTextView: NSViewRepresentable {
         // No word scores: provisional text, or an engine that reports none. The streaming
         // transducers are in the second group by design, so this is the common path rather
         // than a fallback.
-        guard !line.words.isEmpty else {
-            return NSAttributedString(string: line.text, attributes: [
+        guard line.translation == nil, !line.words.isEmpty else {
+            return NSAttributedString(string: line.displayedText, attributes: [
                 .font: body,
                 .foregroundColor: NSColor.labelColor,
             ])

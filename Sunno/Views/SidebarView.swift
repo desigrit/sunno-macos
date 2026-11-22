@@ -11,6 +11,8 @@ struct SidebarView: View {
     /// while the weights download and the engine restarts, which together can take a while.
     let pendingModel: String?
     let onRefreshModels: () -> Void
+    var onLanguage: (String) -> Void = { _ in }
+    var onTranslate: (String) -> Void = { _ in }
 
     @ViewState var modelSectionOpen = false
     @ViewState private var pendingDownload: BackendEvent.CatalogEntry?
@@ -26,6 +28,12 @@ struct SidebarView: View {
                 speakerList
                 Divider()
                 modelSection
+                LanguageChoiceRow(title: "Spoken language", codes: store.spokenChoices,
+                    selected: store.preparingLocale ?? store.spokenLanguage, detected: store.detectedLanguage,
+                    preparing: store.preparingLocale != nil, choose: onLanguage)
+                LanguageChoiceRow(title: "Translate to", codes: store.translationChoices,
+                    selected: store.translationTarget, preparing: store.preparingTranslation, choose: onTranslate)
+                    .padding(.bottom, 6)
             }
         }
         .frame(minWidth: settings.isSidebarCollapsed ? 40 : 200,
@@ -179,7 +187,7 @@ struct SidebarView: View {
         )
         .onPreferenceChange(ListHeightKey.self) { listHeight = $0 }
         }
-        .frame(height: modelSectionOpen ? min(listHeight, max(0, sidebarHeight * 0.75 - CommandBar.height)) : 0,
+        .frame(height: modelSectionOpen ? min(listHeight, max(0, sidebarHeight * 0.75 - CommandBar.height - 62)) : 0,
                alignment: .top)
         .clipped()
         .allowsHitTesting(modelSectionOpen)
