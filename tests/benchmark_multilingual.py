@@ -136,9 +136,22 @@ def main():
         report.update(first_caption_s=round(first,3) if first is not None else None,
                       language_changes=detected, brief_phrase_changed_language=premature,
                       sustained_switch_s=round(switch,3) if switch is not None else None)
+        if args.engine == "whisperkit":
+            from dataclasses import replace
+            model.close()
+            small, _ = start_model(args.engine, replace(cfg, model_size="small", language="hi"), args.download)
+            try:
+                report["hindi_small"] = []
+                for wav, reference in clips["hi"]:
+                    caption = small.final(load_audio(wav)).text
+                    score = SequenceMatcher(None, normalize(reference), normalize(caption), autojunk=False).ratio()
+                    report["hindi_small"].append(dict(reference=reference, caption=caption, similarity=round(score, 3)))
+            finally:
+                small.close()
         args.report.write_text(json.dumps(report, indent=2, ensure_ascii=False),encoding="utf-8")
         print(json.dumps({k:v for k,v in report.items() if k!="captions"}), flush=True)
         if args.engine == "whisperkit":
+            assert all(item["similarity"] > .35 for item in report["hindi_small"]), "Small Hindi model lost the reference"
             assert report["hindi_repeat_matches"] and report["hindi_uses_devanagari"], "Hindi transcription changed across replays"
         assert report["accented_english"]["similarity"] > .35
         assert first is not None and switch is not None and not premature, "Live language switch check failed"

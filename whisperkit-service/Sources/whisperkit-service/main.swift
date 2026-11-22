@@ -90,6 +90,23 @@ struct Reply: Encodable {
     }
 }
 
+/// A fourth token must not recreate an entire four-token sequence from this decode.
+struct HindiRepeatFilter: LogitsFiltering {
+    let firstSpecialToken: Int
+
+    func filterLogits(_ logits: MLMultiArray, withTokens tokens: [Int]) -> MLMultiArray {
+        let start = (tokens.lastIndex { $0 >= firstSpecialToken } ?? -1) + 1
+        let tail = tokens.count - 3
+        guard start < tail else { return logits }
+        var blocked = Set<Int>()
+        for index in start..<tail where tokens[index..<(index + 3)].elementsEqual(tokens[tail...]) {
+            blocked.insert(tokens[index + 3])
+        }
+        guard !blocked.isEmpty else { return logits }
+        return SuppressTokensFilter(suppressTokens: Array(blocked)).filterLogits(logits, withTokens: tokens)
+    }
+}
+
 // MARK: - Framed pipe IO
 
 let input = FileHandle.standardInput
@@ -255,9 +272,14 @@ func handle(_ request: Request, audio: [Float]) async -> Reply {
             language: request.language,
             temperature: request.temperature ?? 0
         )
-        if let prompt = request.prompt {
-            options.promptTokens = whisper.tokenizer?.encode(text: " " + prompt)
+        let previousFilters = whisper.textDecoder.logitsFilters
+        if let prompt = request.prompt, let tokenizer = whisper.tokenizer {
+            options.promptTokens = tokenizer.encode(text: " " + prompt)
+            whisper.textDecoder.logitsFilters = (previousFilters ?? []) + [
+                HindiRepeatFilter(firstSpecialToken: tokenizer.specialTokens.endToken)
+            ]
         }
+        defer { whisper.textDecoder.logitsFilters = previousFilters }
         // Provisional captions have one decoding pass. A small Hindi model also
         // keeps greedy decoding on finalization: warm fallback sampling can turn
         // the same Hindi utterance into different, unrelated short captions.
