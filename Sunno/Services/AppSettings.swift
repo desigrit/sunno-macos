@@ -37,6 +37,12 @@ final class AppSettings: ObservableObject {
         didSet { defaults.set(isCompact, forKey: Keys.isCompact) }
     }
 
+    @Published var spokenLanguage: String {
+        didSet { defaults.set(spokenLanguage, forKey: Keys.spokenLanguage) }
+    }
+    @Published var translateTo: String {
+        didSet { defaults.set(translateTo, forKey: Keys.translateTo) }
+    }
     @Published var isSidebarCollapsed: Bool {
         didSet { defaults.set(isSidebarCollapsed, forKey: Keys.isSidebarCollapsed) }
     }
@@ -132,6 +138,8 @@ final class AppSettings: ObservableObject {
         // asks the user to discover a setting before the app does its job.
         alwaysOnTop = defaults.object(forKey: Keys.alwaysOnTop) as? Bool ?? true
         isCompact = defaults.bool(forKey: Keys.isCompact)
+        spokenLanguage = defaults.string(forKey: Keys.spokenLanguage) ?? "en"
+        translateTo = defaults.string(forKey: Keys.translateTo) ?? "off"
         isSidebarCollapsed = defaults.bool(forKey: Keys.isSidebarCollapsed)
         selectedModel = defaults.string(forKey: Keys.selectedModel)
         let savedIndex = defaults.object(forKey: Keys.deviceIndex) as? Int ?? -1
@@ -178,6 +186,8 @@ final class AppSettings: ObservableObject {
         static let captionFontSize = "captionFontSize"
         static let alwaysOnTop = "alwaysOnTop"
         static let isCompact = "compactMode"
+        static let spokenLanguage = "spokenLanguage"
+        static let translateTo = "translateTo"
         static let isSidebarCollapsed = "sidebarCollapsed"
         static let selectedModel = "selectedModel"
         static let deviceIndex = "deviceIndex"

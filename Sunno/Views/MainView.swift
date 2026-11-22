@@ -144,7 +144,9 @@ struct MainView: View {
                 // and then fails to load is not the one waiting at the next launch.
                 onSelectModel: onSelectModel,
                 pendingModel: models.pending,
-                onRefreshModels: { onCommand(.listModels) }
+                onRefreshModels: { onCommand(.listModels) },
+                onLanguage: { onCommand(.setLanguage($0)) },
+                onTranslate: { onCommand(.translateTo($0)) }
             )
 
             VStack(spacing: 0) {

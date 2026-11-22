@@ -183,6 +183,7 @@ class Recorder:
             "speaker_id": event.get("speaker_id"),
             "text": event.get("text", ""),
             "words": event.get("words") or [],
+            "language": event.get("language"),
         }
         if key is not None:
             line["_caption_key"] = key
@@ -191,6 +192,15 @@ class Recorder:
         self._jsonl.flush()
         if not correction:
             self._lines += 1
+
+    def add_translation(self, event: dict) -> None:
+        record = {k: event[k] for k in ("type", "id", "started_at", "original", "text", "target_language")}
+        key = f"{event['started_at']:.6f}:{event['id']}"
+        if self._closed or key not in self._caption_keys:
+            return
+        record["_caption_key"] = key
+        self._jsonl.write(json.dumps(record, ensure_ascii=False) + "\n")
+        self._jsonl.flush()
 
     def detach(self) -> None:
         """Let go of the files without finalising, so another process can take over.
@@ -225,6 +235,10 @@ def _read_lines(folder: Path) -> list[dict]:
         try:
             line = json.loads(raw)
             key = line.pop("_caption_key", None)
+            if line.get("type") == "translation":
+                if key in positions and out[positions[key]]["text"] == line["original"]:
+                    out[positions[key]]["translation"] = {"language": line["target_language"], "text": line["text"]}
+                continue
             if key is not None and key in positions:
                 out[positions[key]] = line
             else:
@@ -419,6 +433,8 @@ def finalise(folder: Path, started_at: float | None = None) -> Saved:
     for ln in lines:
         who = ln.get("speaker") or "Speaker"
         body.append(f"[{_clock(ln.get('at', 0.0))}] {who}: {ln.get('text', '')}".rstrip())
+        if translated := ln.get("translation"):
+            body.append(f"    [{translated['language']}] {translated['text']}")
     (folder / TRANSCRIPT_TXT).write_text("\n".join(body) + "\n", encoding="utf-8")
 
     (folder / JSONL_NAME).unlink(missing_ok=True)

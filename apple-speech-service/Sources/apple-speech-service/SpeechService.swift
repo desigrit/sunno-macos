@@ -6,6 +6,7 @@ import CoreMedia
 // Private framed pipe, never a network listener. No microphone access and no audio files.
 // Only the explicit prepare command may install system model assets.
 struct Request: Decodable {
+    var locale: String?
     let op: String
     let samples: Int?
     let final: Bool?
@@ -66,12 +67,14 @@ final class NativeSpeech {
     }
     private var segments: [Segment] = []
 
-    private func transcriber() async throws -> SpeechTranscriber {
+    private var segmentSeparator = " "
+
+    private func transcriber(_ identifier: String) async throws -> SpeechTranscriber {
         guard SpeechTranscriber.isAvailable else {
             throw ServiceError(message: "Apple Speech is unavailable on this Mac. Choose a Whisper model.")
         }
-        guard let locale = await SpeechTranscriber.supportedLocale(equivalentTo: Locale(identifier: "en-US")) else {
-            throw ServiceError(message: "Apple Speech does not support English on this Mac. Choose a Whisper model.")
+        guard let locale = await SpeechTranscriber.supportedLocale(equivalentTo: Locale(identifier: identifier)) else {
+            throw ServiceError(message: "This Mac does not support the selected speech language.")
         }
         return SpeechTranscriber(locale: locale, transcriptionOptions: [],
                                  reportingOptions: [.volatileResults], attributeOptions: [])
@@ -79,8 +82,13 @@ final class NativeSpeech {
 
     func handle(_ request: Request, audio: Data) async throws -> [String: Any] {
         switch request.op {
+        case "locales":
+            let supported = await SpeechTranscriber.supportedLocales
+            let installed = await SpeechTranscriber.installedLocales
+            return ["ok": true, "supported": supported.map { $0.identifier(.bcp47) },
+                    "installed": installed.map { $0.identifier(.bcp47) }]
         case "status", "prepare":
-            let module = try await transcriber()
+            let module = try await transcriber(request.locale ?? "en-US")
             if request.op == "prepare" {
                 if let installation = try await AssetInventory.assetInstallationRequest(supporting: [module]) {
                     try await installation.downloadAndInstall()
@@ -90,9 +98,11 @@ final class NativeSpeech {
             return ["ok": true, "available": installed, "supported": true]
         case "begin":
             await reset()
-            let module = try await transcriber()
+            let module = try await transcriber(request.locale ?? "en-US")
+            let code = Locale(identifier: request.locale ?? "en").language.languageCode?.identifier
+            segmentSeparator = ["ja", "zh", "yue", "th", "lo", "km", "my"].contains(code ?? "") ? "" : " "
             guard await AssetInventory.status(forModules: [module]) == .installed else {
-                throw ServiceError(message: "Apple Speech needs its English model. Select it again to retry setup.")
+                throw ServiceError(message: "The speech language needs a download. Select it again to retry setup.")
             }
             guard let format = await SpeechAnalyzer.bestAvailableAudioFormat(compatibleWith: [module]),
                   let converter = AVAudioConverter(from: sourceFormat, to: format) else {
@@ -173,7 +183,7 @@ final class NativeSpeech {
                 await Task.yield()
             }
             if let failed { throw ServiceError(message: failed) }
-            return ["ok": true, "text": segments.map(\.text).joined(separator: " ")
+            return ["ok": true, "text": segments.map(\.text).joined(separator: segmentSeparator)
                 .trimmingCharacters(in: .whitespacesAndNewlines)]
         case "reset":
             await reset()

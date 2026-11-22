@@ -150,7 +150,7 @@ private struct CaptionRow: View {
     private var accessibilityText: String {
         var parts: [String] = []
         if let speaker, !isCompact { parts.append(speaker.displayLabel) }
-        parts.append(line.text)
+        parts.append(line.displayedText)
         return parts.joined(separator: ", ")
     }
 }

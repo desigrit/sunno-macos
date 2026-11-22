@@ -77,9 +77,11 @@ struct Reply: Encodable {
     /// arrives without it, which is the terminal one.
     var progress: Double?
     var available: Bool?
+    var language: String?
+    var probability: Float?
 
     enum CodingKeys: String, CodingKey {
-        case ok, error, text, words, model, progress, available
+        case ok, error, text, words, model, progress, available, language, probability
         case avgLogprob = "avg_logprob"
         case decodeMs = "decode_ms"
         case computeUnits = "compute_units"
@@ -232,6 +234,15 @@ func handle(_ request: Request, audio: [Float]) async -> Reply {
             return Reply(ok: false, error: "could not load \(model): \(error)")
         }
 
+    case "detect_language":
+        guard let whisper else { return Reply(ok: false, error: "No speech model loaded.") }
+        do {
+            let result = try await whisper.detectLangauge(audioArray: audio)
+            let probability = result.langProbs[result.language].map { exp($0) } ?? 0
+            return Reply(ok: true, language: result.language, probability: probability)
+        } catch {
+            return Reply(ok: false, error: error.localizedDescription)
+        }
     case "transcribe":
         guard let whisper else {
             return Reply(ok: false, error: "no model loaded")
@@ -240,7 +251,7 @@ func handle(_ request: Request, audio: [Float]) async -> Reply {
         // Without this the text arrives as "<|startoftranscript|><|en|><|transcribe|><|0.00|>
         // The measurement microphone...", and a caption is not the place to discover that.
         var options = DecodingOptions(
-            language: request.language ?? "en",
+            language: request.language,
             temperature: request.temperature ?? 0
         )
         options.skipSpecialTokens = true

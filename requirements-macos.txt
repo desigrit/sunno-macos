@@ -26,3 +26,5 @@ sherpa-onnx
 
 # Model downloads: resumable ranged fetch, etag caching and integrity.
 huggingface_hub
+
+sentencepiece==0.2.1

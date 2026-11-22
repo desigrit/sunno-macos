@@ -204,6 +204,7 @@ def parse_args() -> tuple[Settings, argparse.Namespace]:
                         help="ctranslate2 compute type; defaults to float16 on GPU, int8 on CPU")
     parser.add_argument("--compute-device", default="auto", choices=("auto", "cuda", "cpu"),
                         help="where to run the model; 'auto' uses the GPU when one is usable")
+    parser.add_argument("--translate-to", default="off", help="local translation target")
     parser.add_argument("--language", default="en", help="forced language, or 'auto'")
     parser.add_argument("--recordings-path", default=None,
                         help="where recordings are written (default: ~/Sunno/Recordings)")
@@ -284,6 +285,8 @@ async def run(settings: Settings, args: argparse.Namespace) -> None:
     startup.enable()
     loop = asyncio.get_running_loop()
     clients: set = set()
+    languages = None
+    desired_language = settings.language or 'auto'
     events: asyncio.Queue[dict] = asyncio.Queue()
     controller = SessionController(running=not args.start_stopped)
     optional_ready = asyncio.Event()
@@ -323,11 +326,19 @@ async def run(settings: Settings, args: argparse.Namespace) -> None:
                 except Exception:
                     pass
             events.put_nowait(event)
+            if event.get("type") in ("final", "correction"):
+                translations.submit(event)
+            elif event.get("type") == "translation" and recorder["active"] is not None:
+                recorder["active"].add_translation(event)
         loop.call_soon_threadsafe(deliver)
 
     # One recording at a time, held in a dict so the closures below and the audio tap all see
     # the same object without a nonlocal chain through several nested functions.
     recorder: dict = {"active": None}
+    from .translation import TranslationQueue
+    translations = TranslationQueue(emit)
+    if getattr(args, "translate_to", "off") != "off":
+        translations.select(args.translate_to, explicit=False)
     from .capture import CaptureManager
     from .capture_target import AudioTarget
     capture = CaptureManager(AudioTarget.from_settings(settings), controller, emit, settings.model_size)
@@ -417,6 +428,9 @@ async def run(settings: Settings, args: argparse.Namespace) -> None:
         nonlocal catalog_task
         clients.add(ws)
         await ws.send(json.dumps(latest_status))
+        if languages is not None:
+            await ws.send(json.dumps(languages.state()))
+        await ws.send(json.dumps(translations.state()))
         if capture.snapshot() is not None:
             await ws.send(json.dumps(capture.snapshot()))
         # A client that reconnects mid-recording must not show an idle button over a running
@@ -443,6 +457,22 @@ async def run(settings: Settings, args: argparse.Namespace) -> None:
                     controller.toggle()
                     if controller.is_running:
                         capture.retry()
+                elif cmd == "translate_to":
+                    try:
+                        translations.select(msg.get("language"))
+                    except ValueError as exc:
+                        await ws.send(json.dumps(translations.state(message=str(exc))))
+                elif cmd == "set_language" and languages is not None:
+                    code = msg.get("language")
+                    try:
+                        if not isinstance(code, str) or code not in languages.choices:
+                            raise ValueError("This speech model does not support that language.")
+                        if asr_apple.is_apple_model(languages.model):
+                            await ws.send(json.dumps(languages.state(preparing=code)))
+                            await asyncio.to_thread(asr_apple.prepare_locale, code)
+                        languages.select(code)
+                    except (RuntimeError, ValueError) as exc:
+                        await ws.send(json.dumps(languages.state(message=str(exc))))
                 elif cmd == "set_input":
                     request_id = msg.get("request_id")
                     try:
@@ -587,7 +617,9 @@ async def run(settings: Settings, args: argparse.Namespace) -> None:
 
         if resolve_engine(args.engine, model_id) == "apple":
             from . import asr_apple
-            return asr_apple.model_is_available(model_id), asr_apple.download_model
+            from functools import partial
+            return (asr_apple.model_is_available(model_id, desired_language),
+                    partial(asr_apple.download_model, language=desired_language))
 
         if resolve_engine(args.engine, model_id) == "whisperkit":
             from . import asr_whisperkit
@@ -688,6 +720,15 @@ async def run(settings: Settings, args: argparse.Namespace) -> None:
 
         await model_ready.wait()
         settings.model_size = chosen_model
+        from .spoken_language import SpokenLanguage
+        locales = None
+        from . import asr_apple
+        if asr_apple.is_apple_model(chosen_model):
+            locales = await asyncio.to_thread(asr_apple.supported_locales, chosen_model)
+        languages = SpokenLanguage(chosen_model, desired_language, emit, locales)
+        selection = languages.choice().code
+        settings.language = "en" if selection == "auto" else selection
+        emit(languages.state())
 
         # A mis-staged CUDA payload should not be fatal any more: the CPU path works, just
         # slower, and a captioning app that runs behind is far better than one that refuses
@@ -736,7 +777,7 @@ async def run(settings: Settings, args: argparse.Namespace) -> None:
         print(f"Model ready (warmup {warmup_ms:.0f} ms)")
 
         pipeline = await startup.run("pipeline_ready", CaptionPipeline,
-            settings, engine, emit,
+            settings, engine, emit, languages=languages,
             should_run=lambda: controller.is_running,
             speaker=speaker,
             # Every frame, including silence, and only while a recording is running. The
@@ -795,6 +836,7 @@ async def run(settings: Settings, args: argparse.Namespace) -> None:
                         print(f"Released {active.folder} for the next process", flush=True)
                     except Exception:
                         pass
+                translations.close()
                 pipeline.close()
 
         async def attach_speaker():

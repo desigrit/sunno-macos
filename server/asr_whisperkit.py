@@ -191,6 +191,7 @@ class WhisperKitEngine:
 
     def __init__(self, settings: "Settings", *, cancelled: threading.Event | None = None) -> None:
         self.settings = settings
+        self._language = settings.language or 'en'
         self._closed = threading.Event()
         binary = service_binary()
         if binary is None:
@@ -244,12 +245,21 @@ class WhisperKitEngine:
 
     # --- decoding ------------------------------------------------------
 
+    def set_language(self, language):
+        if self._language != language:
+            self._language = language
+            self.clear_context()
+
+    def detect_language(self, audio):
+        reply = self._call({"op": "detect_language"}, audio)
+        return reply["language"], reply["probability"]
+
     def _run(self, audio: np.ndarray, want_words: bool, is_final: bool) -> Transcript:
         started = time.perf_counter()
         reply = self._call(
             {
                 "op": "transcribe",
-                "language": self.settings.language,
+                "language": self._language,
                 "word_timestamps": want_words,
                 # Temperature fallback belongs to the final pass alone: provisional text is
                 # replaced moments later and a retry would blow its latency budget.
