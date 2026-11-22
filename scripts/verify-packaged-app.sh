@@ -27,7 +27,7 @@ PYTHONDONTWRITEBYTECODE=1 "$ENGINE/python/bin/python3" -u - <<'PY'
 import importlib
 import platform
 assert platform.machine() == 'arm64'
-for name in ('numpy', 'av', 'huggingface_hub', 'onnxruntime', 'sherpa_onnx', 'sounddevice', 'soxr', 'websockets'):
+for name in ('numpy', 'av', 'huggingface_hub', 'onnxruntime', 'sentencepiece', 'sherpa_onnx', 'sounddevice', 'soxr', 'websockets'):
     print('Loading', name, flush=True)
     importlib.import_module(name)
 import onnxruntime

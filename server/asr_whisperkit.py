@@ -256,9 +256,11 @@ class WhisperKitEngine:
 
     def _run(self, audio: np.ndarray, want_words: bool, is_final: bool) -> Transcript:
         started = time.perf_counter()
+        from .spoken_language import script_hint
         reply = self._call(
             {
                 "op": "transcribe",
+                "prompt": script_hint(self.settings.model_size, self._language),
                 "language": self._language,
                 "word_timestamps": want_words,
                 # Temperature fallback belongs to the final pass alone: provisional text is

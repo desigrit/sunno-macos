@@ -15,6 +15,15 @@ jobs:
         with:
           python-version: '3.12'
       - run: python -m pip install numpy av onnxruntime sentencepiece==0.2.1 huggingface_hub
+      - name: Render light and dark native language controls
+        run: |
+          swiftc Sunno/Theme.swift Sunno/Views/LanguageChoiceRow.swift tests/swift/LanguagePickerRendering.swift -o "$RUNNER_TEMP/picker"
+          "$RUNNER_TEMP/picker" picker-images
+      - uses: actions/upload-artifact@v4
+        with:
+          name: swiftui-language-pickers
+          path: picker-images
+          retention-days: 1
       - run: swift build -c release --package-path apple-speech-service
       - run: swift build -c release --package-path whisperkit-service
       - name: Check Apple locale inventory and Whisper language policy

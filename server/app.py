@@ -424,12 +424,32 @@ async def run(settings: Settings, args: argparse.Namespace) -> None:
             print(f"[error] could not save recording: {exc}", flush=True)
             emit({"type": "recording", "state": "failed", "message": str(exc)})
 
+    locale_revision = 0
+    preparing_locale = None
+    locale_lock = asyncio.Lock()
+    locale_tasks = set()
+
+    async def install_locale(session, code, revision):
+        nonlocal preparing_locale
+        try:
+            async with locale_lock:
+                if revision != locale_revision:
+                    return
+                await asyncio.to_thread(asr_apple.prepare_locale, code)
+            if revision == locale_revision:
+                preparing_locale = None
+                session.select(code)
+        except (OSError, RuntimeError, ValueError) as exc:
+            if revision == locale_revision:
+                preparing_locale = None
+                emit(session.state(message=str(exc)))
+
     async def handler(ws) -> None:  # noqa: ANN001
-        nonlocal catalog_task
+        nonlocal catalog_task, locale_revision, preparing_locale
         clients.add(ws)
         await ws.send(json.dumps(latest_status))
         if languages is not None:
-            await ws.send(json.dumps(languages.state()))
+            await ws.send(json.dumps(languages.state(preparing=preparing_locale)))
         await ws.send(json.dumps(translations.state()))
         if capture.snapshot() is not None:
             await ws.send(json.dumps(capture.snapshot()))
@@ -468,9 +488,14 @@ async def run(settings: Settings, args: argparse.Namespace) -> None:
                         if not isinstance(code, str) or code not in languages.choices:
                             raise ValueError("This speech model does not support that language.")
                         if asr_apple.is_apple_model(languages.model):
-                            await ws.send(json.dumps(languages.state(preparing=code)))
-                            await asyncio.to_thread(asr_apple.prepare_locale, code)
-                        languages.select(code)
+                            locale_revision += 1
+                            preparing_locale = code
+                            emit(languages.state(preparing=code))
+                            task = asyncio.create_task(install_locale(languages, code, locale_revision))
+                            locale_tasks.add(task)
+                            task.add_done_callback(locale_tasks.discard)
+                        else:
+                            languages.select(code)
                     except (RuntimeError, ValueError) as exc:
                         await ws.send(json.dumps(languages.state(message=str(exc))))
                 elif cmd == "set_input":

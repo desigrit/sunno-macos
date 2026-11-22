@@ -166,7 +166,9 @@ class AppleSpeechEngine:
     def _create_corrector(self, cancelled):
         from .asr_whisperkit import WhisperKitEngine
 
-        return WhisperKitEngine(replace(self.settings, model_size="large-v3", use_context_prompt=False),
+        from .spoken_language import root_language
+        return WhisperKitEngine(replace(self.settings, model_size="large-v3", language=root_language(self._locale),
+                                        use_context_prompt=False),
                                 cancelled=cancelled)
 
     def reset_stream(self):

@@ -30,6 +30,7 @@ struct Request: Decodable {
     var downloadBase: String?
     var samples: Int?
     var language: String?
+    var prompt: String?
     var wordTimestamps: Bool?
     var temperature: Float?
     /// The hallucination suppression from config.py. Without these Whisper decodes silence and
@@ -41,7 +42,7 @@ struct Request: Decodable {
     var compressionRatioThreshold: Float?
 
     enum CodingKeys: String, CodingKey {
-        case op, model, samples, language, temperature
+        case op, model, samples, language, prompt, temperature
         case wordTimestamps = "word_timestamps"
         case downloadBase = "download_base"
         case noSpeechThreshold = "no_speech_threshold"
@@ -254,6 +255,7 @@ func handle(_ request: Request, audio: [Float]) async -> Reply {
             language: request.language,
             temperature: request.temperature ?? 0
         )
+        if let prompt = request.prompt { options.promptTokens = whisper.tokenizer?.encode(text: " " + prompt) }
         options.skipSpecialTokens = true
         options.withoutTimestamps = true
         options.wordTimestamps = request.wordTimestamps ?? false

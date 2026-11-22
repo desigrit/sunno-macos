@@ -22,6 +22,8 @@ struct CaptionTextView: NSViewRepresentable {
 
     func makeNSView(context: Context) -> NSTextView {
         let view = WordHoverTextView()
+        view.baseWritingDirection = .natural
+        view.alignment = .natural
         view.isEditable = false
         view.isSelectable = true
         view.drawsBackground = false

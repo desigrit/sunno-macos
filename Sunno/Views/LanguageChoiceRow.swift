@@ -63,7 +63,7 @@ struct LanguageChoiceRow: View {
         .accessibilityLabel(title)
         .accessibilityValue(value)
         .help(title == "Translate to" && selected == "off"
-              ? "Translate completed captions locally. The first language downloads a 635 MB model." : value)
+              ? "Translate completed captions locally. The first language downloads a 638 MB model." : value)
         .popover(isPresented: $isOpen, arrowEdge: .trailing) {
             VStack(alignment: .leading, spacing: 8) {
                 TextField("Search languages", text: $query)
@@ -92,6 +92,10 @@ struct LanguageChoiceRow: View {
                         }
                     }
                     .frame(height: min(250, CGFloat(matches.count * 26)))
+                }
+                if title == "Translate to", selected == "off" {
+                    Text("First use downloads a 638 MB translation model.")
+                        .font(.caption).foregroundStyle(.secondary)
                 }
             }
             .padding(10).frame(width: 248)
