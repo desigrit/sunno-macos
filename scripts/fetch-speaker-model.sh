@@ -22,29 +22,26 @@ NAME="speaker-embedding-campplus-en.onnx"          # matches config.py's default
 DEST="models/$NAME"
 SHA="c46fad10b5f81e1aa4a60c162714208577093655076c5450f8c469e522ec54ef"
 
-# The upstream tag really is spelt "recongition". Do not correct it: it is the release name,
-# and fixing the typo produces a 404.
-URL="https://github.com/k2-fsa/sherpa-onnx/releases/download/speaker-recongition-models/wespeaker_en_voxceleb_CAM++.onnx"
+# The upstream release asset can be replaced. This revision contains the exact
+# speaker weights shipped with the signed 1.0.94.0 app.
+REVISION="70503b6968275c19ba5bdcba8da82023ee73d9d8"
+URL="https://huggingface.co/csukuangfj/speaker-embedding-models/resolve/$REVISION/wespeaker_en_voxceleb_CAM%2B%2B.onnx"
 
-verify() { [ -f "$DEST" ] && [ "$(shasum -a 256 "$DEST" | cut -d' ' -f1)" = "$SHA" ]; }
+verify() { [ -f "$1" ] && [ "$(shasum -a 256 "$1" | cut -d' ' -f1)" = "$SHA" ]; }
 
-if verify; then
+if verify "$DEST"; then
   echo "    already present"
   exit 0
 fi
 
 mkdir -p models
-echo "    downloading 28 MB from k2-fsa/sherpa-onnx"
-curl -fL --progress-bar -o "$DEST.part" "$URL"
-mv "$DEST.part" "$DEST"
-
-if verify; then
-  echo "    verified"
-else
-  # A partial download that gets used is worse than one that fails here: the extractor would
-  # either throw somewhere far away or, worse, load and return quietly meaningless embeddings.
-  echo "    checksum mismatch — got $(shasum -a 256 "$DEST" | cut -d' ' -f1)"
-  echo "    expected $SHA"
-  rm -f "$DEST"
+candidate="$(mktemp "models/.speaker-model.XXXXXXXX")"
+trap 'rm -f "$candidate"' EXIT
+echo "    downloading the pinned speaker model"
+curl -fL --retry 2 --progress-bar -o "$candidate" "$URL"
+if ! verify "$candidate"; then
+  echo "    Speaker model checksum mismatch. Expected $SHA." >&2
   exit 1
 fi
+mv -f "$candidate" "$DEST"
+echo "    verified"

@@ -43,6 +43,7 @@ jobs:
           python tests/test_appcast.py
           python tests/test_release_signatures.py
           python tests/test_app_updater.py
+          bash scripts/fetch-speaker-model.sh
       - name: Prepare temporary signing keychain
         timeout-minutes: 3
         env:
