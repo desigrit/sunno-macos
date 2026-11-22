@@ -191,6 +191,32 @@ class IncrementalTests(unittest.TestCase):
                     corrector.gate.set()
                     worker.stop()
 
+    def test_hybrid_corrections_keep_the_native_phrase_language(self):
+        from server.spoken_language import SpokenLanguage
+        events, corrected_in, live_in = [], [], []
+        corrector = Corrector()
+        corrector.set_language = corrected_in.append
+        engine = LiveEngine(corrector)
+        engine.set_language = live_in.append
+        session = SpokenLanguage("apple-speech-whisper", "fr-CA", events.append, ["fr-CA", "ja-JP"])
+        worker = AsrWorker(engine, events.append, session)
+        worker.start()
+        try:
+            audio = np.ones(16000, np.float32)
+            worker.submit_final(_Job(1, audio, True, choice=session.choice()))
+            self.assertTrue(corrector.entered.wait(2))
+            session.select("ja-JP")
+            worker.submit_final(_Job(2, audio, True, choice=session.choice()))
+            wait_for(lambda: live_in == ["fr-CA", "ja-JP"])
+            corrector.gate.set()
+            wait_for(lambda: len([e for e in events if e["type"] == "correction"]) == 2)
+            self.assertEqual(corrected_in, ["fr", "ja"])
+            self.assertEqual([(e["id"],e["language"]) for e in events if e["type"] == "correction"],
+                             [(1,"fr-CA"),(2,"ja-JP")])
+        finally:
+            corrector.gate.set()
+            worker.stop()
+
     def test_recording_corrections_replace_without_duplicate_or_orphan_lines(self):
         with tempfile.TemporaryDirectory() as tmp:
             rec = Recorder(Path(tmp))

@@ -45,17 +45,27 @@ struct LanguageChoiceRow: View {
             query = ""
             isOpen = true
         } label: {
-            HStack(spacing: 6) {
-                Text(title)
-                Spacer(minLength: 2)
-                Text(value).foregroundStyle(.secondary).lineLimit(1)
+            HStack(spacing: 5) {
+                ViewThatFits(in: .horizontal) {
+                    HStack(spacing: 6) {
+                        Text(title).fixedSize()
+                        Spacer(minLength: 0)
+                        Text(value).foregroundStyle(.secondary).fixedSize()
+                    }
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(title)
+                        Text(value).foregroundStyle(.secondary).lineLimit(2)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
                 if codes.count > 1 {
                     Image(systemName: "chevron.down").font(.system(size: 9)).foregroundStyle(.secondary)
                 }
             }
             .font(.system(size: 12))
-            .padding(.horizontal, 12)
-            .frame(height: 28)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 3)
+            .frame(minHeight: 28)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
