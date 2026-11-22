@@ -86,6 +86,10 @@ def main():
             report["captions"].append(dict(language=code, reference=reference, caption=result.text,
                 similarity=round(score, 3), detected=guessed, confidence=round(float(confidence), 3)))
             print(code, round(score, 2), guessed, flush=True)
+            if code == "hi" and args.engine == "whisperkit":
+                repeat = model.final(audio).text
+                report["hindi_repeat_matches"] = normalize(repeat) == normalize(result.text)
+                report["hindi_uses_devanagari"] = any("\u0900" <= letter <= "\u097f" for letter in result.text)
         path, reference, accent = accented_english()
         model.set_language("en")
         caption = model.final(load_audio(path)).text
@@ -134,6 +138,8 @@ def main():
                       sustained_switch_s=round(switch,3) if switch is not None else None)
         args.report.write_text(json.dumps(report, indent=2, ensure_ascii=False),encoding="utf-8")
         print(json.dumps({k:v for k,v in report.items() if k!="captions"}), flush=True)
+        if args.engine == "whisperkit":
+            assert report["hindi_repeat_matches"] and report["hindi_uses_devanagari"], "Hindi transcription changed across replays"
         assert report["accented_english"]["similarity"] > .35
         assert first is not None and switch is not None and not premature, "Live language switch check failed"
         assert all(row["similarity"] > .12 for row in report["captions"]), "Reference and caption disagree"

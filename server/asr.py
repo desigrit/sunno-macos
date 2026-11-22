@@ -148,8 +148,6 @@ class CTranslate2Engine:
         """
         from .spoken_language import script_hint
         hint = script_hint(self.settings.model_size, self._language)
-        if hint and self._language == "hi":
-            hint = "यह हिंदी में लिखा हुआ वाक्य है।"
         if not self.settings.use_context_prompt:
             return hint
 

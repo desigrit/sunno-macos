@@ -18,7 +18,7 @@ MULTILINGUAL = {"tiny", "base", "small", "medium", "large-v3"}
 def script_hint(model, code):
     # Small Whisper checkpoints can recognize Hindi yet spell it in Urdu script.
     # Supply writing-system context before the transcript, never as caption text.
-    return "नमस्ते।" if code == "hi" and model in {"tiny", "base", "small"} else None
+    return "यह हिंदी में लिखा हुआ वाक्य है।" if code == "hi" and model in {"tiny", "base", "small"} else None
 
 
 def root_language(code):

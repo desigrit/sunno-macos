@@ -255,7 +255,15 @@ func handle(_ request: Request, audio: [Float]) async -> Reply {
             language: request.language,
             temperature: request.temperature ?? 0
         )
-        if let prompt = request.prompt { options.promptTokens = whisper.tokenizer?.encode(text: " " + prompt) }
+        if let prompt = request.prompt {
+            options.promptTokens = whisper.tokenizer?.encode(text: " " + prompt)
+        }
+        // Provisional captions have one decoding pass. A small Hindi model also
+        // keeps greedy decoding on finalization: warm fallback sampling can turn
+        // the same Hindi utterance into different, unrelated short captions.
+        if request.wordTimestamps != true || request.prompt != nil {
+            options.temperatureFallbackCount = 0
+        }
         options.skipSpecialTokens = true
         options.withoutTimestamps = true
         options.wordTimestamps = request.wordTimestamps ?? false
