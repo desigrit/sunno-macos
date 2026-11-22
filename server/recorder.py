@@ -91,10 +91,7 @@ def next_name(root: Path) -> str:
 
 
 def _count_lines(folder: Path) -> int:
-    path = folder / JSONL_NAME
-    if not path.exists():
-        return 0
-    return sum(1 for ln in path.read_text(encoding="utf-8").splitlines() if ln.strip())
+    return len(_read_lines(folder))
 
 
 class Recorder:
