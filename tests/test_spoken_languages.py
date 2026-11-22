@@ -23,6 +23,15 @@ class LanguageTests(unittest.TestCase):
         self.assertEqual(resolve("fr", ("fr-CA","en-US")), "fr-CA")
         self.assertEqual(resolve("es", ("auto", "de")), "auto")
 
+    def test_empty_apple_inventory_offers_an_actionable_recovery(self):
+        from unittest.mock import patch
+        from server import asr_apple
+
+        with patch.object(asr_apple, "supported_locales", return_value=[]), patch.object(asr_apple, "prepare_locale") as prepare:
+            with self.assertRaisesRegex(RuntimeError, "Choose a Whisper model"):
+                asr_apple.download_model("apple-speech", language="fr")
+            prepare.assert_not_called()
+
     def test_revisions_pause_and_short_foreign_phrase(self):
         states = []
         session = SpokenLanguage("base", "auto", states.append)

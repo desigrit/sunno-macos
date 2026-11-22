@@ -128,7 +128,10 @@ def model_is_available(model_id: str, language="en") -> bool:
     service = SpeechService()
     try:
         from .spoken_language import resolve
-        locale = resolve(language, supported_locales(model_id))
+        locales = supported_locales(model_id)
+        if not locales:
+            return False
+        locale = resolve(language, locales)
         available = service.call("status", locale=locale, timeout=10).get("available", False)
     except Exception:
         return False
@@ -142,7 +145,10 @@ def model_is_available(model_id: str, language="en") -> bool:
 
 def download_model(model_id: str, on_progress=None, language="en"):
     from .spoken_language import resolve
-    prepare_locale(resolve(language, supported_locales(model_id)))
+    locales = supported_locales(model_id)
+    if not locales:
+        raise RuntimeError("Apple Speech has no supported languages on this Mac. Choose a Whisper model to start captioning.")
+    prepare_locale(resolve(language, locales))
     if model_id == HYBRID_MODEL:
         from .asr_whisperkit import download_model as download_whisper
         download_whisper("large-v3", on_progress)
