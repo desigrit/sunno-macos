@@ -76,11 +76,11 @@ struct LanguageChoiceRow: View {
                     HStack(spacing: 6) {
                         Text(title).fixedSize()
                         Spacer(minLength: 0)
-                        Text(value).foregroundStyle(.secondary).fixedSize()
+                        Text(value).foregroundStyle(.primary).fixedSize()
                     }
                     VStack(alignment: .leading, spacing: 1) {
                         Text(title)
-                        Text(value).foregroundStyle(.secondary).lineLimit(2)
+                        Text(value).foregroundStyle(.primary).lineLimit(2)
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
                 }
