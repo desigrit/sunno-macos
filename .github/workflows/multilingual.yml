@@ -44,6 +44,8 @@ jobs:
           python tests/test_spoken_languages.py
           python -c "from server.asr_apple import supported_locales; print(supported_locales('apple-speech'))"
       - name: Measure native WhisperKit and check saved captions
+        env:
+          HF_HUB_DOWNLOAD_TIMEOUT: 90
         run: python tests/benchmark_multilingual.py --engine whisperkit --fixtures "$RUNNER_TEMP/fleurs" --report report.json --download
       - name: Verify local French to Portuguese translation
         run: python tests/test_local_translation.py --real
