@@ -15,6 +15,8 @@ struct SidebarView: View {
     var onTranslate: (String) -> Void = { _ in }
 
     @ViewState var modelSectionOpen = false
+    @ViewState private var languageSectionOpen = false
+    @ViewState private var languageSectionHeight: CGFloat = 0
     @ViewState private var pendingDownload: BackendEvent.CatalogEntry?
     @ViewState private var listHeight: CGFloat = 0
     @ViewState private var sidebarHeight: CGFloat = 500
@@ -28,12 +30,12 @@ struct SidebarView: View {
                 speakerList
                 Divider()
                 modelSection
-                LanguageChoiceRow(title: "Spoken language", codes: store.spokenChoices,
-                    selected: store.preparingLocale ?? store.spokenLanguage, detected: store.detectedLanguage,
-                    preparing: store.preparingLocale != nil, choose: onLanguage)
-                LanguageChoiceRow(title: "Translate to", codes: store.translationChoices,
-                    selected: store.translationTarget, preparing: store.preparingTranslation, choose: onTranslate)
-                    .padding(.bottom, 6)
+                SidebarLanguageSection(store: store, isExpanded: $languageSectionOpen,
+                    reduceMotion: settings.reduceMotion, onLanguage: onLanguage, onTranslate: onTranslate)
+                    .background(GeometryReader { proxy in
+                        Color.clear.onAppear { languageSectionHeight = proxy.size.height }
+                            .onChange(of: proxy.size.height) { languageSectionHeight = $0 }
+                    })
             }
         }
         .frame(minWidth: settings.isSidebarCollapsed ? 40 : 200,
@@ -130,41 +132,10 @@ struct SidebarView: View {
         }
     }
 
-    /// A `Button`, not a `DisclosureGroup` label. A disclosure on macOS wires only its chevron
-    /// to the binding and its label is inert however it is shaped, so the section could be
-    /// opened only by hitting a triangle a few points across. Owning the header means the whole
-    /// band responds: the chevron, the words, and every empty point beside them.
     private var header: some View {
-        Button(action: toggle) {
-            HStack(spacing: 7) {
-                Image(systemName: "chevron.right")
-                    .font(.system(size: 10, weight: .semibold))
-                    .foregroundStyle(.tertiary)
-                    .rotationEffect(.degrees(modelSectionOpen ? 90 : 0))
-
-                VStack(alignment: .leading, spacing: 0) {
-                    Text("Speech model")
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundStyle(.secondary)
-                    Text(store.catalog.first(where: { $0.id == store.activeModel })?.name
-                         ?? store.activeModel ?? "not loaded")
-                        .font(.system(size: 11))
-                        .foregroundStyle(.tertiary)
-                        .lineLimit(1)
-                        .truncationMode(.tail)
-                }
-
-                Spacer(minLength: 0)
-            }
-            .padding(.horizontal, 10)
-            .frame(maxWidth: .infinity, minHeight: CommandBar.height)
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel("Speech model")
-        .accessibilityValue(store.activeModel ?? "not loaded")
-        .accessibilityAddTraits(.isButton)
-        .accessibilityHint(modelSectionOpen ? "Collapses the model list" : "Expands the model list")
+        SidebarSectionHeader(title: "Speech model",
+            subtitle: store.catalog.first(where: { $0.id == store.activeModel })?.name ?? store.activeModel ?? "not loaded",
+            isExpanded: modelSectionOpen, minimumHeight: CommandBar.height, action: toggle)
     }
 
     private var list: some View {
@@ -187,7 +158,7 @@ struct SidebarView: View {
         )
         .onPreferenceChange(ListHeightKey.self) { listHeight = $0 }
         }
-        .frame(height: modelSectionOpen ? min(listHeight, max(0, sidebarHeight * 0.75 - CommandBar.height - 62)) : 0,
+        .frame(height: modelSectionOpen ? min(listHeight, max(0, sidebarHeight * 0.75 - CommandBar.height - languageSectionHeight)) : 0,
                alignment: .top)
         .clipped()
         .allowsHitTesting(modelSectionOpen)
