@@ -92,7 +92,9 @@ def main():
         cfg = Settings(model_size="base", language="en", device="cpu", compute_type="int8", enable_speakers=False)
         model, startup = start_model(args.engine, cfg, args.download)
         report = {"engine": args.engine, "machine": platform.machine(), "startup_s": startup, "captions": []}
-        clips = {code: fetch(args.fixtures, code) for code in CONFIGS}
+        # Playback uses two English and Spanish clips. Hindi also checks two corrections.
+        clips = {code: fetch(args.fixtures, code, count=2 if code in ("en", "es", "hi") else 1)
+                 for code in CONFIGS}
         recorder = Recorder(Path(tmp) / "recordings")
         for index, (code, entries) in enumerate(clips.items()):
             wav, reference = entries[0]

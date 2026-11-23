@@ -1,0 +1,3 @@
+These 13 test recordings and their reference transcripts come from Google's FLEURS test split at revision `70bb2e84b976b7e960aa89f1c648e09c59f894dd`. The file stems identify the original WAV recordings. The WavPack files preserve every original audio sample. [Dataset and attribution](https://huggingface.co/datasets/google/fleurs/tree/70bb2e84b976b7e960aa89f1c648e09c59f894dd) · [CC BY 4.0 license](https://creativecommons.org/licenses/by/4.0/)
+
+Alexis Conneau, Min Ma, Simran Khanuja, Yu Zhang, Vera Axelrod, Siddharth Dalmia, Jason Riesa, Clara Rivera and Ankur Bapna (2022). [FLEURS paper](https://arxiv.org/abs/2205.12446)
