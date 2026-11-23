@@ -3,6 +3,7 @@ import SwiftUI
 
 private final class DisclosureState: ObservableObject {
     @Published var expanded = false
+    @Published var modelExpanded = false
     var measuredHeight: CGFloat = 0
 }
 
@@ -11,13 +12,20 @@ private struct LanguageSectionFixture: View {
     let store: TranscriptStore
 
     var body: some View {
-        SidebarLanguageSection(store: store, isExpanded: $state.expanded, reduceMotion: true,
-                               onLanguage: { _ in }, onTranslate: { _ in })
-            .background(GeometryReader { proxy in
-                Color.clear.onAppear { state.measuredHeight = proxy.size.height }
-                    .onChange(of: proxy.size.height) { state.measuredHeight = $0 }
-            })
-            .frame(width: 232, height: 140, alignment: .top)
+        VStack(spacing: 0) {
+            SidebarDisclosure(title: "Speech model", subtitle: "Whisper large-v3",
+                isExpanded: $state.modelExpanded, reduceMotion: true, minimumHeaderHeight: 64,
+                maximumContentHeight: 28) {
+                Text("Whisper large-v3").font(.system(size: 12)).padding(.leading, 26).frame(height: 28)
+            }
+            SidebarLanguageSection(store: store, isExpanded: $state.expanded, reduceMotion: true,
+                                   onLanguage: { _ in }, onTranslate: { _ in })
+                .background(GeometryReader { proxy in
+                    Color.clear.onAppear { state.measuredHeight = proxy.size.height }
+                        .onChange(of: proxy.size.height) { state.measuredHeight = $0 }
+                })
+        }
+            .frame(width: 232, height: 215, alignment: .top)
             .background(Color(nsColor: .windowBackgroundColor))
     }
 }
@@ -39,7 +47,7 @@ struct LanguagePickerRendering {
             }
             let state = DisclosureState()
             let view = NSHostingView(rootView: LanguageSectionFixture(state: state, store: store))
-            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 232, height: 140),
+            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 232, height: 215),
                                   styleMask: [.borderless], backing: .buffered, defer: false)
             window.appearance = NSAppearance(named: appearance)
             window.contentView = view
@@ -48,8 +56,8 @@ struct LanguagePickerRendering {
                 RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.2))
                 view.layoutSubtreeIfNeeded()
             }
-            func clickHeader() throws {
-                let point = NSPoint(x: view.bounds.midX, y: view.bounds.height - 16)
+            func clickHeader(distanceFromTop: CGFloat) throws {
+                let point = NSPoint(x: view.bounds.midX, y: view.bounds.height - distanceFromTop)
                 func mouse(_ type: NSEvent.EventType) throws -> NSEvent {
                     guard let event = NSEvent.mouseEvent(with: type, location: point, modifierFlags: [],
                         timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber,
@@ -77,10 +85,14 @@ struct LanguagePickerRendering {
             let closedHeight = state.measuredHeight
             precondition(!state.expanded && closedHeight > 0 && closedHeight <= 42, "Language starts in one compact row")
             try capture("language-collapsed-\(mode).png")
-            try clickHeader()
-            precondition(state.expanded && state.measuredHeight >= closedHeight + 50, "Clicking the header reveals both pickers")
+            try clickHeader(distanceFromTop: 32)
+            precondition(state.modelExpanded && !state.expanded, "Opening Speech model leaves Language collapsed")
+            try clickHeader(distanceFromTop: 64 + 28 + 16)
+            precondition(state.modelExpanded && state.expanded && state.measuredHeight >= closedHeight + 50, "Clicking the header reveals both pickers")
             try capture("languages-\(mode).png")
-            try clickHeader()
+            try clickHeader(distanceFromTop: 32)
+            precondition(!state.modelExpanded && state.expanded, "Closing Speech model leaves Language open")
+            try clickHeader(distanceFromTop: 64 + 16)
             precondition(!state.expanded && state.measuredHeight == closedHeight, "A second click reclaims the space")
             precondition(store.detectedLanguage == "es" && store.translationTarget == "pt", "Folding preserves the choices")
             window.orderOut(nil)
