@@ -18,7 +18,6 @@ struct SidebarView: View {
     @ViewState private var languageSectionOpen = false
     @ViewState private var languageSectionHeight: CGFloat = 0
     @ViewState private var pendingDownload: BackendEvent.CatalogEntry?
-    @ViewState private var listHeight: CGFloat = 0
     @ViewState private var sidebarHeight: CGFloat = 500
 
     var body: some View {
@@ -103,20 +102,18 @@ struct SidebarView: View {
         .listStyle(.sidebar)
     }
 
-    /// The model list, revealed by animating a clipped height rather than by inserting rows.
-    ///
-    /// Inserting them made the contents appear all at once while the header was still moving,
-    /// which reads as two separate events. The Windows build solved this by animating the
-    /// height of a container that clips, and this is the same thing in SwiftUI: the rows are
-    /// always laid out at their natural size, and the frame around them opens from zero.
-    ///
-    /// The longer catalogue scrolls within three quarters of the sidebar.
     private var modelSection: some View {
-        VStack(spacing: 0) {
-            header
-            list
+        SidebarDisclosure(title: "Speech model",
+            subtitle: store.catalog.first(where: { $0.id == store.activeModel })?.name ?? store.activeModel ?? "not loaded",
+            isExpanded: $modelSectionOpen, reduceMotion: settings.reduceMotion, minimumHeaderHeight: CommandBar.height,
+            maximumContentHeight: max(0, sidebarHeight * 0.75 - CommandBar.height - languageSectionHeight),
+            onExpand: onRefreshModels) {
+            VStack(alignment: .leading, spacing: 10) {
+                ForEach(store.catalog) { entry in modelRow(entry) }
+            }
+            .padding(.horizontal, 12)
+            .padding(.bottom, 12)
         }
-        .animation(settings.reduceMotion ? nil : .easeOut(duration: 0.22), value: modelSectionOpen)
         .alert("Download \(pendingDownload?.name ?? "this model")?",
                isPresented: Binding(get: { pendingDownload != nil },
                                     set: { if !$0 { pendingDownload = nil } })) {
@@ -130,47 +127,6 @@ struct SidebarView: View {
             // rows is three gigabytes.
             Text(downloadPrompt)
         }
-    }
-
-    private var header: some View {
-        SidebarSectionHeader(title: "Speech model",
-            subtitle: store.catalog.first(where: { $0.id == store.activeModel })?.name ?? store.activeModel ?? "not loaded",
-            isExpanded: modelSectionOpen, minimumHeight: CommandBar.height, action: toggle)
-    }
-
-    private var list: some View {
-        ScrollView {
-        VStack(alignment: .leading, spacing: 10) {
-            ForEach(store.catalog) { entry in
-                modelRow(entry)
-            }
-        }
-        .padding(.horizontal, 12)
-        .padding(.bottom, 12)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        // Measured at its natural height, before the frame below collapses it, so the open
-        // state has a real number to animate to rather than a guess.
-        .fixedSize(horizontal: false, vertical: true)
-        .background(
-            GeometryReader { proxy in
-                Color.clear.preference(key: ListHeightKey.self, value: proxy.size.height)
-            }
-        )
-        .onPreferenceChange(ListHeightKey.self) { listHeight = $0 }
-        }
-        .frame(height: modelSectionOpen ? min(listHeight, max(0, sidebarHeight * 0.75 - CommandBar.height - languageSectionHeight)) : 0,
-               alignment: .top)
-        .clipped()
-        .allowsHitTesting(modelSectionOpen)
-        .accessibilityHidden(!modelSectionOpen)
-    }
-
-    private func toggle() {
-        modelSectionOpen.toggle()
-        // Re-ask for the catalogue on open. The delay figures are learned from real decodes,
-        // and the first fetch happens on connect before a single utterance has been timed, so
-        // without this somebody would keep reading the shipped estimate all session.
-        if modelSectionOpen { onRefreshModels() }
     }
 
     private var downloadPrompt: String {
@@ -319,13 +275,5 @@ struct SidebarView: View {
                     .fill(Theme.inkSubtle)
             )
             .fixedSize()
-    }
-}
-
-/// The list's natural height, so the reveal has a number to animate to.
-private struct ListHeightKey: PreferenceKey {
-    static var defaultValue: CGFloat = 0
-    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
-        value = max(value, nextValue())
     }
 }

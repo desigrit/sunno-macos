@@ -30,10 +30,30 @@ def load_audio(path):
     return np.concatenate(frames)
 
 
+def download_whisperkit_fixture(model):
+    from server.asr_whisperkit import WhisperKitServiceError, download_model, weights_root
+
+    try:
+        download_model(model)
+    except WhisperKitServiceError as error:
+        if "NSURLErrorDomain Code=-1001" not in str(error):
+            raise
+        # A slow CDN response can exceed the native client's timeout on a hosted Mac.
+        # Fetch the same Core ML fixture before starting the timed native load.
+        from huggingface_hub import snapshot_download
+
+        repo = "argmaxinc/whisperkit-coreml"
+        print(f"Native download timed out. Retrying the {model} fixture from the model repository.", flush=True)
+        snapshot_download(repo, revision="0f63a7800b00dd0226abd051b906c246e1907482",
+                          allow_patterns=f"openai_whisper-{model}/*",
+                          local_dir=weights_root() / "models" / repo, max_workers=4)
+
+
 def start_model(engine, cfg, download):
     if engine == "whisperkit":
-        from server.asr_whisperkit import WhisperKitEngine, download_model
+        from server.asr_whisperkit import WhisperKitEngine
         factory = WhisperKitEngine
+        download_model = download_whisperkit_fixture
     elif engine == "onnx":
         from server.asr_onnx import OnnxEngine
         from server.arm_whisper import download as download_model
@@ -72,7 +92,9 @@ def main():
         cfg = Settings(model_size="base", language="en", device="cpu", compute_type="int8", enable_speakers=False)
         model, startup = start_model(args.engine, cfg, args.download)
         report = {"engine": args.engine, "machine": platform.machine(), "startup_s": startup, "captions": []}
-        clips = {code: fetch(args.fixtures, code) for code in CONFIGS}
+        # Playback uses two English and Spanish clips. Hindi also checks two corrections.
+        clips = {code: fetch(args.fixtures, code, count=2 if code in ("en", "es", "hi") else 1)
+                 for code in CONFIGS}
         recorder = Recorder(Path(tmp) / "recordings")
         for index, (code, entries) in enumerate(clips.items()):
             wav, reference = entries[0]
